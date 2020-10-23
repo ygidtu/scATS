@@ -357,7 +357,7 @@ apamix = function(n_max_apa, # maximum number of APA sites
       log_zmat = cal_z_k(alpha_arr, beta_arr, ws, k_arr[i], log_zmat)
       Z = norm_z(log_zmat)
       
-      # res = mstep(alpha_arr, beta_arr, ws, Z, k_arr[i]) # no need to 
+      res = mstep(alpha_arr, beta_arr, ws, Z, k_arr[i]) # no need to 
       
       ws = res$ws
       
@@ -522,7 +522,7 @@ apamix = function(n_max_apa, # maximum number of APA sites
       tmpn = length(chng)
       st_arr = c(0,chng[-tmpn])+1
       en_arr = chng
-      return(list(st_arr=st_arr, en_arr=en_arr, vals = tmp_vals))
+      return(list(st_arr=st_arr, en_arr=en_arr))
     }
     
     # handle zero in sign array, half changed to previous/next segment non-zero sign 
@@ -565,7 +565,6 @@ apamix = function(n_max_apa, # maximum number of APA sites
     # change points
     sign_arr = sign(diff(c(-1,ks_res$y)))
     sign_arr = handle_zero(sign_arr)
-    
     chng = cumsum( rle(sign_arr)$lengths )
     mode_arr = ks_res$x[ chng[seq(1,length(chng),2)] ]
     n_mode = length(mode_arr)
@@ -786,7 +785,7 @@ apamix = function(n_max_apa, # maximum number of APA sites
         
         # initilize alpha_arr and beta_arr, considered pre_alpha_arr and pre_beta_arr
         theta_win_mat = init_theta_win(n_apa)
-        
+        print(theta_win_mat)
         if(debug){
           cat("initial ws: ",ws,"\n")
           cat("initial alpha: ",theta_win_mat[,1],"\n")
@@ -959,8 +958,9 @@ apamix = function(n_max_apa, # maximum number of APA sites
     res$beta_arr = pre_init_theta_win_mat[,2]
     return(res)
   }
-  
+  print(paste("L=", L))
   data_wins = split_data(r1_utr_st_arr, r1_len_arr, L)
+  print(data_wins)
   if(debug){
     cat('Initialization windows\n')
     tmp = cbind(data_wins$st_arr,data_wins$mode_arr, data_wins$en_arr, data_wins$ws_arr)

@@ -1,6 +1,7 @@
 module StartPSI
     using FilePathsBase
     using Formatting
+    using Base
     export new, run, Data
 
     struct Data
@@ -55,13 +56,13 @@ module StartPSI
         end
     end
 
-    function CountExclusion(self::Data)
-        open(self.Junction, "r") do w
-            open(self.FilteredJunction, "w+") do io
+    function FilterJunctions(self::Data)
+        open(self.Junction, "r") do io
+            open(self.FilteredJunction, "w+") do w
                 while !eof(io)
                     line = strip(readline(io))
                     if !occursin("description", line)
-                        lines = split(line, "\t")
+                        lines = split(replace(line, "," => "\t"), "\t")
                         write(w, join([
                             lines[1],
                             string(parse(Int64, lines[2])+parse(Int64, lines[13])), 
@@ -71,11 +72,13 @@ module StartPSI
                         write(w, "\n")
                     end
                 end
-                close(io)
+                close(w)
             end
-            close(w)
+            close(io)
         end
+    end
 
+    function CountExclusion(self::Data)
         gff = self.Gtf
         junc = self.FilteredJunction
         open(self.ExonicExclusion, "w+") do w
@@ -89,8 +92,19 @@ module StartPSI
         rm(self.FilteredJunction)
     end
 
-    function run(self::Data)
+    function start(self::Data)
+        FilterJunctions(self)
         CountInclusion(self)
         CountExclusion(self)
+
+        # curr_dir = @__DIR__
+        # bash = string(curr_dir, "/../ref/ExonicPartPSI_2.sh")
+
+        # GFF=self.Gtf
+        # INBAM=self.Input
+        # readLength=self.Length
+        # JUNCTIONS=self.Junction
+        # PREFIX=self.Output
+        # Base.run(`bash $bash bedtools $GFF $INBAM $readLength $JUNCTIONS $PREFIX`)
     end
 end

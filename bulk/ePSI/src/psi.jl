@@ -42,7 +42,9 @@ function parse_commandline()
 end
 
 args = parse_commandline()
-addprocs(args["process"])
+# if args["process"] > 1
+#     addprocs(args["process"])
+# end
 
 @everywhere begin
     using FilePathsBase
@@ -52,7 +54,7 @@ addprocs(args["process"])
 end
 
 
-function main(input::String, junctions::String, gtf::String, output::String, len::Int64)
+function main(input::String, junctions::String, gtf::String, output::String, len::Int64, process::Int64=1)
 
     output = absolute(Path(output))
     if !exists(output)
@@ -72,9 +74,19 @@ function main(input::String, junctions::String, gtf::String, output::String, len
         end
     end
 
+    # if process > 1
     @showprogress pmap(fs) do d
-        psi = StartPSI.run(d)
+        try
+            psi = StartPSI.start(d)
+        catch e
+            println(e)
+        end
     end
+    # else
+    #     @showprogress for d = fs
+    #         psi = StartPSI.run(d)
+    #     end
+    # end
 end
 
 main(
