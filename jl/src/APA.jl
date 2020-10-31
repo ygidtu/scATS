@@ -2,6 +2,7 @@
 module APA
     using Distributions
     using Formatting
+    using KernelEstimator
     using RCall
     using StatsBase
     using ProgressBars
@@ -19,7 +20,7 @@ module APA
         Memento.register(LOGGER)
     end
 
-    include("EM.jl")
+    include(joinpath(@__DIR__, "EM.jl"))
 
     Number = Union{Int64, Float64, Int}
 
@@ -71,7 +72,7 @@ module APA
         init_beta_arr::Vector
         unif_log_lik::Float64
         min_theta::Number
-        all_win_log_lik_mat_list
+        all_win_log_lik_mat_list::Vector
         data_wins
     end
 
@@ -308,7 +309,7 @@ module APA
         return(sign_arr)
     end
 
-    function split_data(self::APAData)::APAWins
+    function split_data(self::APAData;using_R::Bool=false)::APAWins
         n_frag = length(self.r1_utr_st_arr)
         coverage_cnt = zeros(trunc(Int64, self.utr_len))
         for i = 1:n_frag
@@ -327,9 +328,14 @@ module APA
 
         ks_res_x = [x for x in 1:self.utr_len]
         theta_step = self.theta_step
-        ks_res = rcopy(R"ksmooth($ks_res_x, $coverage_cnt, kernel='normal', bandwidth = 5*$theta_step, x.points = $ks_res_x)")
-        ks_res = collect(values(ks_res))[2]
-        # ks_res = kerneldensity(coverage_cnt, xeval=ks_res_x, h = 5 * self.theta_step, kernel=gaussiankernel)
+        
+        ks_res = Vector()
+        if using_R
+            ks_res = rcopy(R"ksmooth($ks_res_x, $coverage_cnt, kernel='normal', bandwidth = 5*$theta_step, x.points = $ks_res_x)")
+            ks_res = collect(values(ks_res))[2]
+        else
+            ks_res = localconstant(ks_res_x, coverage_cnt, xeval=ks_res_x, h = 5 * self.theta_step, kernel=gaussiankernel)
+        end
         sign_arr = sign.(diff(append!([-1.0], ks_res)))
 
         if sign_arr[1] != 1
@@ -346,9 +352,10 @@ module APA
         n_mode = length(mode_arr)
         
         # This is different with numpy and R
-        boarder_arr = ks_res_x[chng[2:2:length(chng)]][1:(n_mode-1)]
-        if n_mode - 1 < 1
-            boarder_arr = ks_res_x[chng[2:2:length(chng)]][1:1]
+        tmp_inds = [x for x = 2:2:length(chng)]
+        boarder_arr = ks_res_x[chng[tmp_inds]][1:(n_mode-1)]
+        if n_mode - 1 < 1 && length(tmp_inds) > 0
+            boarder_arr = ks_res_x[chng[tmp_inds]][1:1]
         end
 
         st_arr = append!([1], boarder_arr .+ 1)
@@ -360,9 +367,7 @@ module APA
         end
         ws_arr = ws_arr  ./ sum(ws_arr)
    
-        return APAWins(
-            st_arr, en_arr, ws_arr, mode_arr
-        )
+        return APAWins(st_arr, en_arr, ws_arr, mode_arr)
     end
 
     function init(self::APAData)
@@ -394,7 +399,7 @@ module APA
                     self.all_theta[tmp_ind],
                     self.pmf_s_dis_arr,
                     self.s_dis_arr,
-                    false
+                    do_log=false
                 )
             end
         end
@@ -600,7 +605,7 @@ module APA
         )
     end
 
-    function em_optim(self::APAData, n_apa::Int64; n_trial::Int64=5, verbose::Bool=false)
+    function em_optim(self::APAData, n_apa::Int64; n_trial::Int64=5)
         lb_arr = Array{Number}(undef, n_trial, 1)
         bic_arr = Array{Number}(undef, n_trial, 1)
         res_list = Array{EM.EMData}(undef, n_trial, 1)
@@ -612,7 +617,7 @@ module APA
                 ws = ws ./ sum(ws)
                 theta_win_mat = init_theta_win(self, n_apa)
 
-                if verbose
+                if self.verbose
                     info(LOGGER, string(theta_win_mat))
                 end
 
@@ -630,13 +635,15 @@ module APA
                     self.unif_log_lik,
                     self.min_theta,
                     self.utr_len,
-                    verbose=verbose
+                    verbose=self.verbose
                 )
             catch e
-                info(LOGGER, Formatting.format(
-                    FormatExpr("Error found  in {} trial. Next"), i
-                ))
-                res_list[i] = emptyData()
+                if self.verbose
+                    info(LOGGER, Formatting.format(
+                        FormatExpr("Error found  in {} trial. Next - {}"), i, e
+                    ))
+                end
+                res_list[i] = EM.emptyData()
             end
 
             if isnothing(res_list[i].alpha_arr)
@@ -646,7 +653,7 @@ module APA
             lb_arr[i] =  res_list[i].lb_arr[length(res_list[i].lb_arr)]
             bic_arr[i] =  res_list[i].lb_arr[length(res_list[i].bic)]
 
-            if verbose
+            if self.verbose
                 info(LOGGER, Formatting.format(
                     FormatExpr("K = {}, {}_trial, n_trial_{}: ws: {}; alpha: {}; beta: {};lb = {}; bic = {}"), 
                     n_apa, i, n_trial, round.(res_list[i].ws),
@@ -661,7 +668,7 @@ module APA
         return res_list[min_ind]
     end
 
-    function rm_component(res, self::APAData,nround::Int=200,verbose::Bool=false)
+    function rm_component(res, self::APAData,nround::Int=200)
 
         K = length(res.alpha_arr)
         if K < 1
@@ -714,9 +721,10 @@ module APA
         )
     end
 
-    function fit(self::APAData)::EM.EMData
-        self.data_wins = split_data(self)
-
+    function fit(self::APAData; using_R::Bool=false)::EM.EMData
+        # println("start split")
+        self.data_wins = split_data(self, using_R=using_R)
+        # println("after split")
         if self.fixed_inference_flag && !isnothing(self.pre_init_theta_win_mat)
             alpha_arr = replace_with_closest(
                 self.all_theta, 
@@ -746,7 +754,7 @@ module APA
         bic_arr = Array{Number}(undef, self.n_max_apa, 1)
 
         for i in self.n_max_apa:-1:self.n_min_apa
-            res_tmp = em_optim(self, i, verbose=self.verbose)
+            res_tmp = em_optim(self, i)
             push!(res_list, res_tmp)
 
             if isnothing(res_tmp.ws)
@@ -761,7 +769,9 @@ module APA
         res = res_list[argmin(bic_arr)]
 
         if isnothing(res.ws)
-            warn(LOGGER, "Inference failed. No results available.")
+            if self.verbose
+                warn(LOGGER, "Inference failed. No results available.")
+            end
             return res
         end
 
@@ -770,45 +780,52 @@ module APA
 end
 
 
-using CSV
-using DataFrames
-using StatsBase
+# using CSV
+# using DataFrames
+# using StatsBase
 
-df = DataFrame(CSV.File(
-    "/mnt/raid61/Personal_data/zhangyiming/code/afe/tests/extract/test.txt",
-    delim='\t', header = 1
-))
+# df = DataFrame(CSV.File(
+#     "/mnt/raid61/Personal_data/zhangyiming/code/afe/tests/extract/test.txt",
+#     delim='\t', header = 1
+# ))
 
-r1_utr_st_arr=df.StartLocInUTR # start location of each read on UTR part
+# r1_utr_st_arr=df.StartLocInUTR # start location of each read on UTR part
+# r1_len_arr=df.LenInUTR # length of each read on UTR part
+# polya_len_arr=[NaN for _ in df.LenPA] # length of polyA
+# # pa_site_arr=df$PASite, # pa site locations of reads
+# L = mean(df.UTREnd - df.UTRStart)
 
-r1_utr_st_arr = r1_utr_st_arr
-r1_len_arr=df.LenInUTR # length of each read on UTR part
-polya_len_arr=[NaN for _ in df.LenPA] # length of polyA
-# pa_site_arr=df$PASite, # pa site locations of reads
-L = mean(df.UTREnd - df.UTRStart)
+# r1_utr_st_arr = r1_utr_st_arr .+ L
+# utr_l = maximum(r1_utr_st_arr) + maximum(r1_len_arr) + 300
 
-r1_utr_st_arr = r1_utr_st_arr .+ L
+# self = APA.new(
+#   5, 1,
+#   r1_utr_st_arr,
+#   r1_len_arr,
+#   polya_len_arr,
+#   polya_len_arr,
+#   polya_len_arr,
+#   trunc(Int64, utr_l),
+#   mu_f = 270,
+#   sigma_f = 30,
+#   min_ws = 0.01,
+#   verbose = true
+# )
 
+# self = APA.new(
+#     5, 1,
+#     [-389, -386, -383, -383] .+ 207,
+#     [207, 207, 207, 207],
+#     [NaN, NaN, NaN, NaN],
+#     [NaN, NaN, NaN, NaN],
+#     [NaN, NaN, NaN, NaN],
+#     trunc(Int64, 207),
+#     mu_f = 270,
+#     sigma_f = 30,
+#     min_ws = 0.01,
+#     verbose = true
+# )
 
-utr_l = maximum(r1_utr_st_arr) + maximum(r1_len_arr) + 300
+# res = APA.fit(self)
+# println(res)
 
-self = APA.new(
-  5, 1,
-  r1_utr_st_arr,
-  r1_len_arr,
-  polya_len_arr,
-  polya_len_arr,
-  polya_len_arr,
-  trunc(Int64, utr_l),
-  mu_f = 270,
-  sigma_f = 30,
-  min_ws = 0.01,
-  verbose = true
-)
-
-
-res = APA.fit(self)
-
-println(res)
-# # LOGGER.info('init infer')
-# a = test.inference()

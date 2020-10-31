@@ -245,4 +245,5 @@ def extract(
         w.write(RelativeInfo.header() + "\n")
         for r in tqdm(res, desc="Writing"):
             for u in r:
-                w.write(str(u) + "\n")
+                if str(u):
+                    w.write(str(u) + "\n")

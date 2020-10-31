@@ -13,6 +13,7 @@ from statsmodels.nonparametric.kernel_regression import KernelReg
 
 from apamix.EM import EM
 from apamix.mix_utils import *
+
 from utils.utils import dotdict, dict_list
 
 from matplotlib import pyplot as plt
@@ -295,6 +296,8 @@ class APA:
         # )
         # print(ks_res)
         ks_res_x = np.arange(self.L) + 1
+        print(coverage_cnt)
+        print(ks_res_x)
         ks_res = KernelReg(coverage_cnt, ks_res_x, "c", bw=[5 * self.theta_step], reg_type="lc") # 
         ks_res = ks_res.fit()[0] # coverage_cnt
         # ks_res = np.max(ks_res) - ks_res
@@ -305,9 +308,9 @@ class APA:
         # plt.savefig(os.path.join(__dir__, "ks_res.png"))
         # exit(0)
 
-
+        print(ks_res)
         sign_arr = np.sign(np.diff(np.concatenate(([-1], ks_res))))
-
+        print(sign_arr)
         if sign_arr[0] != 1:
             raise ValueError('First sign value not 1, split_data func')
 
@@ -328,7 +331,10 @@ class APA:
                     mid = np.int(np.round((st + en + 1) / 2))
                     sign_arr[st:mid] = tmp_vals[i - 1]
                     sign_arr[mid:en] = tmp_vals[i + 1]
+        
+        print(sign_arr)
         st_arr, lengths, tmp_vals = rle(sign_arr)
+        print(st_arr, lengths, tmp_vals)
         chng = np.cumsum(lengths)
         mode_arr = ks_res_x[chng[np.arange(len(chng), step=2)] - 1]
         n_mode = len(mode_arr)
@@ -882,25 +888,33 @@ class APA:
 
 if __name__ == '__main__':
 
-    df = pd.read_csv('/mnt/data8/zhouran/proj/2019-scAPA/data/HSC_run/debug/1_6274198_6276648.txt',#'neg_test/debug/10_112925430_112928428.txt',
+    df = pd.read_csv('/mnt/raid61/Personal_data/zhangyiming/code/afe/tests/extract/test.txt',#'neg_test/debug/10_112925430_112928428.txt',
                      sep='\t',
-                     # names=['V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7'])
-                     names=['V1', 'V2', 'V3', 'V4', 'V5', 'V6', 'V7', 'V8', 'V9'])
+    )
+    r1_utr_st_arr=df['StartLocInUTR'] # start location of each read on UTR part
 
-    offset = 150
-    df.V1 = df.V1 + offset
-    df.V7 = df.V7 + offset
-    L = max(df.V1) + max(df.V2) + 50
-    # logger.debug('init running')
-    test = APA(n_max_apa=5,
-               n_min_apa=1,
-               r1_utr_st_arr=df.V1,
-               r1_len_arr=df.V2,
-               r2_len_arr=df.V3,
-               polya_len_arr=df.V6,
-               pa_site_arr=df.V7,
-               utr_len=L,
-               verbose=True
-               )
+    r1_utr_st_arr = r1_utr_st_arr
+    r1_len_arr=df['LenInUTR'] # length of each read on UTR part
+    polya_len_arr=[np.NaN for _ in df['LenPA']] # length of polyA
+    # pa_site_arr=df$PASite, # pa site locations of reads
+    L = np.mean(df['UTREnd'] - df['UTRStart'])
+
+    r1_utr_st_arr = r1_utr_st_arr + L
+
+
+    utr_l = max(r1_utr_st_arr) + max(r1_len_arr) + 300
+
+    test = APA(
+        5, 1,
+        [int(x) for x in r1_utr_st_arr],
+        [int(x) for x in r1_len_arr],
+        polya_len_arr,
+        polya_len_arr,
+        polya_len_arr,
+        int(utr_l),
+    )
+
+    
+    print(test)
     # logger.debug('init infer')
     a = test.inference()

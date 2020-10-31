@@ -22,11 +22,31 @@ module EM
     Number = Union{Int64, Float64, Int}
 
     struct EMData
-        ws::AbstractArray
-        alpha_arr::Vector
-        beta_arr::Vector
-        lb_arr::Vector
-        bic::Number
+        ws::Union{AbstractArray, Nothing}
+        alpha_arr::Union{Vector, Nothing}
+        beta_arr::Union{Vector, Nothing}
+        lb_arr::Union{Vector, Nothing}
+        bic::Union{Number, Nothing}
+    end
+
+    Base.show(io::IO, self::EMData) = begin
+        res = Vector{String}()
+        for i in [self.ws, self.alpha_arr, self.beta_arr, self.lb_arr]
+            if isnothing(i)
+                i = "NA"
+            else
+                i = join(map(string, i), ",")
+            end
+            push!(res, i)
+        end
+
+        if isnothing(self.bic)
+            push!(res, "NA")
+        else
+            push!(res, string(self.bic))
+        end
+
+        print(io, join(res, "\t"))
     end
 
     struct WinK
@@ -52,7 +72,7 @@ module EM
         return res
     end
 
-    function lik_r_s(r_arr, s, do_log=false)
+    function lik_r_s(r_arr::Vector, s::Number, do_log::Bool=false)::Vector
         res = [r_arr .<= s] ./ s
         if do_log
             return log.(res)
@@ -61,28 +81,28 @@ module EM
         end
     end
 
-    function lik_x_st(x_arr, s, theta, mu_f, sigma_f, do_log::Bool=false)
+    function lik_x_st(x_arr::Vector, s_arr::Vector, theta::Number, mu_f::Number, sigma_f::Number, do_log::Bool=false)::Vector
         if do_log
-            return logpdf.(Normal(theta+s+1-mu_f, sigma_f), x_arr)
+            return [logpdf(Normal(theta + s + 1 - mu_f, sigma_f), x) for (x, s) in zip(x_arr, s_arr)]
         else
-            return pdf.(Normal(theta+s+1-mu_f, sigma_f), x_arr)
+            return [pdf(Normal(theta + s + 1 - mu_f, sigma_f), x) for (x, s) in zip(x_arr, s_arr)]
         end
     end
     
-    function lik_l_xt(x_arr, l_arr, theta, log::Bool=false)
+    function lik_l_xt(x_arr::Vector, l_arr::Vector, theta::Number, do_log::Bool=false)::Vector
         utr_len_arr = theta .- x_arr .+ 1
         valid_inds = l_arr .<= utr_len_arr
 
-        if any(isnan(utr_len_arr[valid_inds]))
+        if any(isnan.(utr_len_arr[valid_inds]))
             warn(LOGGER, "some length is 0.")
         end
-
+        res = valid_inds .+ 0
         res[valid_inds] = 1 ./ utr_len_arr[valid_inds]
-        if any(isinf(res))
+        if any(isinf.(res))
             throw(string("res contains inf: ", res))
         end
 
-        if log
+        if do_log
             return log.(res)
         else
             return res
@@ -90,31 +110,34 @@ module EM
     end
 
     function lik_lsr_t(
-        x_arr, l_arr, r_arr, s_arr,
-        theta, mu_f, sigma_f, pmf_s_dis_arr, 
-        s_dis_arr, log::Bool = false)
+        x_arr::Vector, l_arr::Vector, r_arr::Vector, s_arr::Vector,
+        theta::Number, mu_f::Number, sigma_f::Number, pmf_s_dis_arr::Vector, 
+        s_dis_arr::Vector; do_log::Bool = false)::Vector
 
         s_len = length(s_dis_arr)
         res = zeros(length(x_arr))
 
-        oth_inds = isnan.(x_arr)
-        valid_inds =  1 .- x_arr
+        valid_inds, oth_inds = Vector{Int}(), Vector{Int}()
+        for (i, j) in enumerate(x_arr)
+            if isnan(j)
+                push!(oth_inds, i)
+            else
+                push!(valid_inds, i)
+            end
+        end
+        
+        if length(valid_inds) > 0
+            tmp1 = lik_x_st(x_arr[valid_inds], s_arr[valid_inds], theta, mu_f, sigma_f, do_log)
+            tmp2 = lik_l_xt(x_arr[valid_inds], s_arr[valid_inds], theta, do_log)
 
-        n_valid_inds = sum(valid_inds)
-        n_other_inds = sum(oth_inds)
-
-        if n_valid_inds > 0
-            tmp1 = lik_x_st(x_arr[valid_inds], s_arr[valid_inds], theta, mu_f, sigma_f, log)
-            tmp2 = lik_l_xt(x_arr[valid_inds], s_arr[valid_inds], theta, log)
-
-            if log
+            if do_log
                 res[valid_inds] = tmp1 .+ tmp2
             else
                 res[valid_inds] = tmp1 .* tmp2
             end
         end
 
-        if !any(oth_inds)
+        if length(oth_inds) < 1
             return res
         end
 
@@ -126,7 +149,7 @@ module EM
             tmp_sum .+= tmp1 .* tmp2 .* tmp3 .* pmf_s_dis_arr[i]
         end
         
-        if log
+        if do_log
             res[oth_inds] = log.(tmp_sum)
         else
             res[oth_inds] = tmp_sum
@@ -134,7 +157,9 @@ module EM
         return res
     end
 
-    function lik_lsr_t0(x_arr, l_arr, r_arr, s_arr, theta, pmf_s_dis_arr, s_dis_arr, log)
+    function lik_lsr_t0(
+        x_arr::Vector, l_arr::Vector, r_arr::Vector, s_arr::Vector, 
+        theta::Number, pmf_s_dis_arr::Vector, s_dis_arr::Vector; do_log::Bool=false)::Vector
         s_len = length(s_dis_arr)
 
         try
@@ -167,7 +192,7 @@ module EM
         
         end
 
-        if log
+        if do_log
             res[oth_inds] = log(tmp_sum)
         else
             res[oth_inds] = tmp_sum
@@ -201,13 +226,13 @@ module EM
         return(WinK(alpha, beta, max_loglik))
     end
 
-    function exp_log_lik(log_zmat, Z)::Number
+    function exp_log_lik(log_zmat::AbstractArray, Z::AbstractArray)::Number
         ZZ = Z .* log_zmat
         ZZ[findall(isequal(0), Z)] .= 0
         return sum(ZZ)
     end
 
-    function elbo(log_zmat, Z)
+    function elbo(log_zmat::AbstractArray, Z::AbstractArray)::Number
         LZ = deepcopy(Z)
         LZ[findall(!isequal(0), Z)] .= log.(Z[findall(!isequal(0), Z)])
         entropy = -1 .* Z .* LZ
@@ -222,7 +247,7 @@ module EM
         all_win_log_lik_mat_list::Vector,
         alpha_arr::Vector, beta_arr::Vector, ws, k::Int,
         log_zmat, all_theta::Vector, init_beta_arr::Vector,
-        unif_log_lik::Number)
+        unif_log_lik::Number)::AbstractArray
 
         K = length(ws) - 1
         tmp_len = length(all_win_log_lik_mat_list)
@@ -237,13 +262,13 @@ module EM
         return log_zmat
     end
 
-    function norm_z(Z::AbstractArray)
+    function norm_z(Z::AbstractArray)::AbstractArray
         Z = Z .- maximum(Z, dims=2)
         Z = [exp.(x) for x in Z]
         return Z ./ sum(Z, dims=2)
     end
 
-    function cal_bic(log_zmat, Z)
+    function cal_bic(log_zmat::AbstractArray, Z::AbstractArray)::Number
         N, K = size(Z)
         K = K - 1
         return -2 * exp_log_lik(log_zmat, Z) + (3 * K + 1) * log(N)
@@ -252,7 +277,7 @@ module EM
     function fixed_inference(
         alpha_arr::Vector, beta_arr::Vector, n_frag::Number, nround::Int, 
         all_theta::Vector, all_win_log_lik_mat_list::Vector, init_beta_arr::Vector,
-        unif_log_lik::Number, verbose::Bool=false)
+        unif_log_lik::Number, verbose::Bool=false)::EMData
 
         lb, lb_arr = -Inf, Array{Number}(undef, nround, 1)
 
