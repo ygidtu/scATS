@@ -94,7 +94,7 @@ module EM
         valid_inds = l_arr .<= utr_len_arr
 
         if any(isnan.(utr_len_arr[valid_inds]))
-            warn(LOGGER, "some length is 0.")
+            debug(LOGGER, "some length is 0.")
         end
         res = valid_inds .+ 0
         res[valid_inds] = 1 ./ utr_len_arr[valid_inds]
@@ -302,7 +302,7 @@ module EM
         i = 1
         for i = 1:nround
             if verbose
-                info(LOGGER, Formatting.format(
+                debug(LOGGER, Formatting.format(
                     FormatExpr("iteration={}, lb={}"), i, lb
                 ))
             end
@@ -330,7 +330,7 @@ module EM
             end
         end
         if verbose
-            info(LOGGER, Formatting.format(
+            debug(LOGGER, Formatting.format(
                 FormatExpr("Run all {} iterations. lb={}"), 
                 i, lb
             ))
@@ -342,7 +342,7 @@ module EM
         
         # label = argmax(log_zmat, dims=2)
         if verbose
-            info(LOGGER, Formatting.format(
+            debug(LOGGER, Formatting.format(
                 FormatExpr("bic={}; estimated ws: {}; estimated alpha:  {}; estimated beta: {}"), 
                 bic, ws, alpha_arr, beta_arr
             ))
@@ -525,7 +525,7 @@ module EM
         end
 
         if verbose
-            info(LOGGER, Formatting.format(
+            debug(LOGGER, Formatting.format(
                 FormatExpr("Run all {} interactions. lb={}"), i, lb
             ))
         end
@@ -536,7 +536,7 @@ module EM
         end
         
         if verbose
-            info(LOGGER, Formatting.format(
+            debug(LOGGER, Formatting.format(
                 FormatExpr("bic={}; estimated ws: {}; estimated alpha:  {}; estimated beta: {}"), 
                 bic, ws, alpha_arr, beta_arr
             ))
@@ -547,7 +547,7 @@ module EM
 
             for i in oth_inds
                 if any(abs(alpha_arr[i] .- pre_alpha_arr) .< min_pa_gap)
-                    warn(LOGGER, Formatting.format(
+                    debug(LOGGER, Formatting.format(
                         FormatExpr("alpha: {} is within {} distance"),
                         alpha_arr[i], min_pa_gap, 
 

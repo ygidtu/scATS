@@ -2,16 +2,17 @@
 module APA
     using Distributions
     using Formatting
+    using KernelDensity
     using KernelEstimator
     using RCall
     using StatsBase
-    using ProgressBars
+    using ProgressMeter
 
     using Memento
     using Compat: @__MODULE__  # requires a minimum of Compat 0.26. Not required on Julia 0.7
 
     # Create our module level LOGGER (this will get precompiled)
-    Memento.config!("debug"; fmt="[{date} - {level} | {name}]: {msg}")
+    Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
     const LOGGER = getlogger(@__MODULE__)
 
     # Register the module level LOGGER at runtime so that folks can access the LOGGER via `get_LOGGER(MyModule)`
@@ -133,7 +134,7 @@ module APA
 
         if n_pre_pa_sites > 0
             if n_pre_pa_sites > self.n_max_apa
-                warn(LOGGER, Formatting.format(
+                debug(LOGGER, Formatting.format(
                     FormatExpr("n_max_apa: {} change to n_pre_pa_sites: {}"), 
                     self.n_max_apa, n_pre_pa_sites
                 ))
@@ -618,7 +619,7 @@ module APA
                 theta_win_mat = init_theta_win(self, n_apa)
 
                 if self.verbose
-                    info(LOGGER, string(theta_win_mat))
+                    debug(LOGGER, string(theta_win_mat))
                 end
 
                 res_list[i] = EM.em_algo(
@@ -639,7 +640,7 @@ module APA
                 )
             catch e
                 if self.verbose
-                    info(LOGGER, Formatting.format(
+                    debug(LOGGER, Formatting.format(
                         FormatExpr("Error found  in {} trial. Next - {}"), i, e
                     ))
                 end
@@ -654,7 +655,7 @@ module APA
             bic_arr[i] =  res_list[i].lb_arr[length(res_list[i].bic)]
 
             if self.verbose
-                info(LOGGER, Formatting.format(
+                debug(LOGGER, Formatting.format(
                     FormatExpr("K = {}, {}_trial, n_trial_{}: ws: {}; alpha: {}; beta: {};lb = {}; bic = {}"), 
                     n_apa, i, n_trial, round.(res_list[i].ws),
                     res_list[i].alpha_arr, res_list[i].beta_arr, 
@@ -770,7 +771,7 @@ module APA
 
         if isnothing(res.ws)
             if self.verbose
-                warn(LOGGER, "Inference failed. No results available.")
+                debug(LOGGER, "Inference failed. No results available.")
             end
             return res
         end
@@ -778,54 +779,4 @@ module APA
         return rm_component(res, self)
     end
 end
-
-
-# using CSV
-# using DataFrames
-# using StatsBase
-
-# df = DataFrame(CSV.File(
-#     "/mnt/raid61/Personal_data/zhangyiming/code/afe/tests/extract/test.txt",
-#     delim='\t', header = 1
-# ))
-
-# r1_utr_st_arr=df.StartLocInUTR # start location of each read on UTR part
-# r1_len_arr=df.LenInUTR # length of each read on UTR part
-# polya_len_arr=[NaN for _ in df.LenPA] # length of polyA
-# # pa_site_arr=df$PASite, # pa site locations of reads
-# L = mean(df.UTREnd - df.UTRStart)
-
-# r1_utr_st_arr = r1_utr_st_arr .+ L
-# utr_l = maximum(r1_utr_st_arr) + maximum(r1_len_arr) + 300
-
-# self = APA.new(
-#   5, 1,
-#   r1_utr_st_arr,
-#   r1_len_arr,
-#   polya_len_arr,
-#   polya_len_arr,
-#   polya_len_arr,
-#   trunc(Int64, utr_l),
-#   mu_f = 270,
-#   sigma_f = 30,
-#   min_ws = 0.01,
-#   verbose = true
-# )
-
-# self = APA.new(
-#     5, 1,
-#     [-389, -386, -383, -383] .+ 207,
-#     [207, 207, 207, 207],
-#     [NaN, NaN, NaN, NaN],
-#     [NaN, NaN, NaN, NaN],
-#     [NaN, NaN, NaN, NaN],
-#     trunc(Int64, 207),
-#     mu_f = 270,
-#     sigma_f = 30,
-#     min_ws = 0.01,
-#     verbose = true
-# )
-
-# res = APA.fit(self)
-# println(res)
 

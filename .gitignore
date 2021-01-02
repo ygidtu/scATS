@@ -154,3 +154,7 @@ errors/
 *.inclusion
 *.zip
 *.tab
+
+.vscode
+*.txt
+*.pdf

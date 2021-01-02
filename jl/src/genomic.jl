@@ -2,9 +2,12 @@ import Base.isless
 
 
 module Genomic
-    export GTF, Bed, create_GTF, sort_gtf
+    using Parameters
+    using ProgressMeter
 
-    struct GTF
+    export GTF, Bed, create_GTF, load_GTF, issame, isupstream, isdownstream
+
+    @with_kw struct GTF
         Chrom::String
         Start::Int64
         End::Int64
@@ -23,7 +26,7 @@ module Genomic
         "\t", g.Type, "\t", g.ID, "-", g.Name, "\t", g.GeneID, "\t", g.TranscriptID
     )
 
-    struct BED
+    @with_kw struct BED
         Chrom::String
         Start::Int64
         End::Int64
@@ -36,6 +39,8 @@ module Genomic
         io, 
         join([b.Chrom, b.Start, b.End, b.Name, b.Score, b.Strand], "\t")
     )
+
+    Region = Union{Genomic.GTF, Genomic.BED}
 
     # convert gtf attributes to dict
     function extract_attributes(record::SubString)::Dict{String, String}
@@ -101,11 +106,77 @@ module Genomic
         push!(res, old_bed)
         return res
     end
+
+    function load_GTF(gtf::AbstractString)::Dict
+        data = Dict(
+            "transcript"=>Dict{String, Genomic.GTF}(), 
+            "exon"=>Dict{String, Vector}()
+        )
+
+        open(gtf) do io
+            seekend(io)
+            fileSize = position(io)
+            seekstart(io)
+
+            p = Progress(fileSize, 1)   # minimum update interval: 1 second
+            while !eof(io)
+                line = readline(io)
+                if startswith(line, "#")
+                    continue
+                end
+
+                gtf = Genomic.create_GTF(line)
+                if gtf.Type == "transcript"
+                    # if there is not gene_biotype or gene_biotype is not specific types passed
+                    if !haskey(gtf.Attributes, "gene_biotype") || !(gtf.Attributes["gene_biotype"] in ["antisense", "lincRNA", "protein_coding"])
+                        continue
+                    end
+
+                    data[gtf.Type][gtf.ID] = gtf
+                elseif gtf.Type == "exon"
+                    if !haskey(data["transcript"], gtf.TranscriptID)
+                        continue
+                    end
+
+                    if !haskey(data[gtf.Type], gtf.TranscriptID)
+                    data[gtf.Type][gtf.TranscriptID] = Vector()
+                    end
+                    push!(data[gtf.Type][gtf.TranscriptID], gtf)
+                end
+                update!(p, position(io))
+            end
+        end
+
+        return data
+    end
+
+    function issame(a::Region, b::Region, mismatch::Int=3)::Bool
+        if a.Chrom == b.Chrom && abs(a.Start - b.Start) < mismatch && abs(a.End - b.End) < mismatch
+            return true
+        end
+    
+        return false
+    end
+
+    function isupstream(a::Region, b::Region)::Bool
+        if a.Chrom != b.Chrom
+            return a.Chrom < b.Chrom
+        end
+
+        return a.End < b.Start
+    end
+
+    function isdownstream(a::Region, b::Region)::Bool
+        if a.Chrom != b.Chrom
+            return a.Chrom > b.Chrom
+        end
+
+        return a.Start > b.End
+    end
 end
 
-Region = Union{Genomic.GTF, Genomic.BED}
 
-function isless(a::Region, b::Region)
+function isless(a::Genomic.Region, b::Genomic.Region)
     if a.Chrom != b.Chrom
         return a.Chrom < b.Chrom
     end
@@ -116,3 +187,4 @@ function isless(a::Region, b::Region)
 
     return a.End < b.End
 end
+

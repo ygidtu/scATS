@@ -9,7 +9,8 @@ using FilePathsBase
 using Memento
 using ProgressMeter
 
-include("genomic.jl")
+
+include(joinpath(@__DIR__, "src", "genomic.jl"))
 
 
 function parse_commandline()
@@ -59,45 +60,8 @@ function main()
         mkdir(out_dir)    
     end
 
-    data = Dict(
-        "transcript"=>Dict{String, Genomic.GTF}(), 
-        "exon"=>Dict{String, Vector}()
-    )
-
     info(logger, string("reading from ", gtf))
-    open(gtf) do io
-        seekend(io)
-        fileSize = position(io)
-        seekstart(io)
-
-        p = Progress(fileSize, 1)   # minimum update interval: 1 second
-        while !eof(io)
-            line = readline(io)
-            if startswith(line, "#")
-                continue
-            end
-
-            gtf = Genomic.create_GTF(line)
-            if gtf.Type == "transcript"
-                # if there is not gene_biotype or gene_biotype is not specific types passed
-                if !haskey(gtf.Attributes, "gene_biotype") || !(gtf.Attributes["gene_biotype"] in ["antisense", "lincRNA", "protein_coding"])
-                    continue
-                end
-
-                data[gtf.Type][gtf.ID] = gtf
-            elseif gtf.Type == "exon"
-                if !haskey(data["transcript"], gtf.TranscriptID)
-                    continue
-                end
-
-                if !haskey(data[gtf.Type], gtf.TranscriptID)
-                   data[gtf.Type][gtf.TranscriptID] = Vector()
-                end
-                push!(data[gtf.Type][gtf.TranscriptID], gtf)
-            end
-            update!(p, position(io))
-        end
-    end
+    data = Genomic.load_GTF(gtf)
     
     # iterover transcripts
     mt_lst = Vector{Genomic.BED}()

@@ -1,6 +1,8 @@
 
 using ArgParse
+using BioGenerics
 using Distributed
+using XAM
 
 
 function parse_commandline()
@@ -55,13 +57,25 @@ function parse_commandline()
             arg_type = Int64
             default = 9
         "--max-reads-to-test"
-            help="max number of reads to test, to reduce memory usage"
+            help="max number of reads to test, to reduce memory usage, -1 mean to test all reads"
             arg_type = Int64
-            default = 200
+            default = -1
         "--seed"
             help="seed used to select reads to test, if there are too much reads"
             arg_type = Int64
             default = 42
+        "--min-reads"
+            help = "minimum reads to construct ATS"
+            arg_type = Int
+            default = 10
+        # "--min-distance"
+        #     help="minimum distance between to sites to test"
+        #     arg_type = Int
+        #     default = 10
+        # "--max-distance"
+        #     help="maximum distance between to sites to test"
+        #     arg_type = Int
+        #     default = 1000
         "--verbose"
             help="whether to display additional message"
             action = :store_true
@@ -85,140 +99,7 @@ end
     #=
     using StatsBase
     =#
-    # include(joinpath(@__DIR__, "src", "APA.jl"))
     include(joinpath(@__DIR__, "src", "Extract.jl"))
-    #=
-    struct Data
-        BC::String
-        Chrom::String
-        UTRStart::Int64
-        UTREnd::Int64
-        ReadStart::Int64
-        ReadEnd::Int64
-        ReadLabel::String
-        StartLocInUTR::Union{Int64, Float64}
-        LenInUTR::Union{Int64, Float64}
-        LenInPA::Union{Int64, Float64}
-        LenPA::Union{Int64, Float64}
-        PASite::Union{Int64, Float64}
-    end
-
-    function newData(data::Dict{String, String})::Data
-        start_loc_in_utr = get(data, "StartLocInUTR", nothing)
-        if !isnothing(start_loc_in_utr)
-            start_loc_in_utr = parse(Int64, start_loc_in_utr)
-        end
-        len_in_utr = get(data, "LenInUTR", "NA")
-        if len_in_utr != "NA"
-            len_in_utr = parse(Int64, len_in_utr)
-        else
-            len_in_utr = NaN
-        end
-        len_in_pa = get(data, "LenInPA", "NA")
-        if len_in_pa != "NA"
-            len_in_pa = parse(Int64, len_in_pa)
-        else
-            len_in_pa = NaN
-        end
-        len_pa = get(data, "LenPA", "NA")
-        if len_pa != "NA"
-            len_pa = parse(Int64, len_pa)
-        else
-            len_pa = NaN
-        end
-        pa_site = get(data, "PASite", "NA")
-        if pa_site != "NA"
-            pa_site = parse(Int64, pa_site)
-        else
-            pa_site = NaN
-        end
-
-        return Data(
-            data["BC"], data["Chrom"], 
-            parse(Int64, data["UTRStart"]), parse(Int64, data["UTREnd"]),
-            parse(Int64, data["ReadStart"]), parse(Int64, data["ReadEnd"]),
-            data["ReadLabel"], start_loc_in_utr, len_in_utr,
-            len_in_pa, len_pa, pa_site
-        )
-  
-    end
-
-    function runAPA(
-        data::Vector;
-        mu_f::Int64=300, min_ws::Float64=0.01, min_pa_gap::Int64=100,
-        max_beta::Int64=70, theta_step::Int64=9, sigma_f::Int64=50,
-        using_R::Bool=false, verbose::Bool=false
-    )::Vector{String}
-        data = [newData(i) for i = data]
-        res = Vector{String}()
-        for i = data
-            #=
-            r1_utr_st_arr=df.StartLocInUTR # start location of each read on UTR part
-
-            r1_utr_st_arr = r1_utr_st_arr
-            r1_len_arr=df.LenInUTR # length of each read on UTR part
-            polya_len_arr=[NaN for _ in df.LenPA] # length of polyA
-            # pa_site_arr=df$PASite, # pa site locations of reads
-            L = mean(df.UTREnd - df.UTRStart)
-
-            r1_utr_st_arr = r1_utr_st_arr .+ L
-            =#
-            temp_data = data[findall(x -> x.UTRStart == i.UTRStart && x.UTREnd == i.UTREnd && x.BC == i.BC, data)]
-            if length(temp_data) < 2
-                continue
-            end
-            r1_utr_st_arr, r1_len_arr, polya_len_arr, Ls = Vector{Int64}(), Vector{Int64}(), Vector{Union{Int64, Float64}}(), Vector{Int64}()
-            reads_start, reads_end = Vector{String}(), Vector{String}()
-            for j = temp_data
-                push!(r1_utr_st_arr, j.StartLocInUTR)
-                push!(r1_len_arr, j.LenInUTR)
-                push!(polya_len_arr, j.LenPA)
-                push!(Ls, j.UTREnd - j.UTRStart)
-                push!(reads_start, string(j.ReadStart))
-                push!(reads_end, string(j.ReadEnd))
-            end
-            L = mean(Ls)
-
-            try
-                self = APA.new(
-                    5, 1,
-                    r1_utr_st_arr .+ L,
-                    r1_len_arr,
-                    polya_len_arr,
-                    polya_len_arr,
-                    polya_len_arr,
-                    trunc(Int64, maximum(r1_len_arr) + maximum(r1_utr_st_arr) + 300),
-                    mu_f = mu_f,
-                    sigma_f = sigma_f,
-                    min_ws = min_ws,
-                    min_pa_gap=min_pa_gap,
-                    max_beta=max_beta, 
-                    theta_step=theta_step,
-                    verbose = verbose
-                )
-
-                temp_res = APA.fit(self, using_R=using_R)
-
-                push!(res,
-                    Formatting.format(
-                        FormatExpr("{}\t{}:{}-{}\t{}\t{}\t{}"), 
-                        i.BC, i.Chrom, i.UTRStart, i.UTREnd, 
-                        join(reads_start, ","), join(reads_end, ","), 
-                        string(temp_res)
-                    )
-                )
-            catch e
-                println(e)
-                println(r1_utr_st_arr)
-                println(r1_len_arr)
-                println(L)
-                continue
-            end
-
-        end
-        return res
-    end
-    =#
 end
 
 
@@ -227,7 +108,9 @@ function main(
     mu_f::Int64=300, min_ws::Float64=0.01, min_pa_gap::Int64=100,
     max_beta::Int64=70, theta_step::Int64=9, sigma_f::Int64=50,
     using_R::Bool=false, verbose::Bool=false,
-    max_reads_to_test::Int64=200, seed::Int=42
+    max_reads_to_test::Int64=-1, seed::Int=42,
+    process::Int=1, min_reads::Int=10, 
+    # min_distance::Int=10, max_distance::Int=500
 )
     logger = Memento.config!("debug"; fmt="[{date} - {level} | {name}]: {msg}")
     output = absolute(Path(output))
@@ -241,67 +124,16 @@ function main(
         exit(1)
     end
 
-    #=
-    HEADER = ["BC", "Chrom", "UTRStart", "UTREnd", "ReadStart", "ReadEnd", "ReadLabel", "StartLocInUTR", "LenInUTR", "LenInPA", "LenPA", "PASite"]
-    processed = ""
-
-    temp_data = Vector()
-
-    open(input_file,"r") do file
-        seekend(file)
-        fileSize = position(file)
-        seekstart(file)
-        p = Progress(fileSize, 1)   # minimum update interval: 1 second
-        open(output, "w+") do w
-            while !eof(file)
-                line = split(strip(readline(file)), "\t")
-                update!(p, position(file))
-                data = Dict(i=>string(j) for (i, j) in zip(HEADER, line))
-                # println(data)
-                if parse(Int, get(data, "StartLocInUTR", -Inf)) < distance
-                    continue
-                end
-                
-                if  processe != data["Chrom"] && length(temp_data) > 100
-                    # process previous data
-                    if length(temp_data) > 1
-
-                        res = pmap(collect(keys(temp_data))) do p
-                            return runAPA(
-                                temp_data[p],
-                                mu_f = mu_f, sigma_f = sigma_f,
-                                min_ws = min_ws, min_pa_gap = min_pa_gap,
-                                max_beta = max_beta, theta_step = theta_step,
-                                using_R = using_R, verbose = verbose
-                            )
-                        end
-
-                        for i = res
-                            write(w, string(join(i, "\n"), "\n"))
-                        end
-                        flush(w)
-                    end
-
-                    # reset collected data
-                    processed = data["Chrom"]
-                    temp_data = [data]
-                else
-                    # if haskey(temp_data, data["BC"])
-                    #     push!(temp_data[data["BC"]], data)
-                    # else
-                    #     temp_data[data["BC"]] = [data]
-                    # end
-                    push!(temp_data, data)
-                end
-            end
-            close(w)
-        end
-
-        close(file)
+    reader = open(BAM.Reader, bam)
+    chromosomes = Dict{String, String}()
+    for h = findall(header(reader), "SQ")
+        chromosomes[h["SN"]] = h["LN"]
     end
-    =#
+    close(reader)
 
-    beds = Vector()
+    # println(chromosomes)
+
+    beds = Dict{String, Vector}()
     r = open(input_file, "r")
     seekend(r)
     fileSize = position(r)
@@ -309,7 +141,26 @@ function main(
     seekstart(r)
     p = Progress(fileSize, 1)   # minimum update interval: 1 second
     while !eof(r)
-        push!(beds, Extract.new_bed(readline(r)))
+        try
+            temp_bed = Extract.new_bed(readline(r), chromosomes=chromosomes)
+
+            if temp_bed.chrom == ""
+                continue
+            end
+
+            temp = get(beds, temp_bed.score, Vector())
+
+            if length(temp) == 0 || temp[length(temp)].name != temp_bed.name
+                push!(temp, temp_bed)
+            end
+            beds[temp_bed.score] = temp
+            # if length(beds) > 10
+            #     break
+            # end
+        catch e
+            warn(logger, string("error while reading promoters: ", e))
+            continue
+        end
         update!(p, position(r))
     end
     close(r)
@@ -323,41 +174,42 @@ function main(
     end
     
     info(logger, "start running")
-    # res = @showprogress pmap(beds) do b
-    #     # println(b)
-    #     return Extract.get_record_from_bam(
-    #         bam, b, distance=distance,
-    #         mu_f = mu_f, sigma_f = sigma_f,
-    #         min_ws = min_ws, min_pa_gap = min_pa_gap,
-    #         max_beta = max_beta, theta_step = theta_step,
-    #         using_R = using_R, verbose = verbose
-    #     )
-    #     # println(temp)
-    #     # return temp
-    # end
+    res = @showprogress "Reading..." pmap(collect(values(beds))) do b
+        temp = Extract.get_record_from_bam(
+            bam, b, 
+            distance=distance, 
+            min_reads=min_reads, 
+            # min_distance=min_distance,
+            # max_distance=max_distance,
+            max_number_of_sites=max_reads_to_test,
+            seed=seed
+        )
+        return temp
+    end
+
+    # extract reads and drop duplicates
+    temp_data = Dict{String, Vector{Extract.ExtractedData}}()
+    total = 0
+    for t = res
+        for r = t
+            total += 1
+            k = Extract.get_hash(r)
+
+            temp_vec = get(temp_data, k, Vector())
+            push!(temp_vec, r)
+            temp_data[k] = temp_vec
+        end
+    end
+
+    info(logger, string("compressed: ", length(temp_data), "; total: ", total))
+    # calculate
+    res = @showprogress "Computing..." pmap(collect(values(temp_data))) do data
+        return Extract.run(data)
+    end
 
     open(output, "w+") do w
-        chunk = 1000
-        pbar = Progress(length(beds), 1)
-        for i in 1:chunk:length(beds)
-
-            # res = Vector()
-            # for b = beds[i:min(i+chunk, length(beds))]
-            res = pmap(beds[i:min(i+chunk, length(beds))]) do b
-                temp = Extract.get_record_from_bam(
-                    bam, b, distance=distance,
-                    mu_f = mu_f, sigma_f = sigma_f,
-                    min_ws = min_ws, min_pa_gap = min_pa_gap,
-                    max_beta = max_beta, theta_step = theta_step,
-                    using_R = using_R, verbose = verbose,
-                    max_number_of_sites=max_reads_to_test, seed=seed
-                )
-                # push!(res, temp)
-                return temp
-            end
-
-
-            for r = res
+        for t = res
+            for r = t
                 if r != ""
                     write(w, string(r, "\n"))
                 end
@@ -374,5 +226,7 @@ main(
     min_ws = args["min-ws"], min_pa_gap=args["min-pa-gap"],
     max_beta=args["max-beta"], theta_step=args["theta-step"],
     using_R=args["using-R"], verbose=args["verbose"],
-    max_reads_to_test=args["max-reads-to-test"], seed=args["seed"]
+    max_reads_to_test=args["max-reads-to-test"], seed=args["seed"],
+    process=args["process"], min_reads=args["min-reads"], 
+    # min_distance=args["min-distance"], max_distance=args["max-distance"]
 )
