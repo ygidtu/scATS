@@ -52,6 +52,9 @@ function main()
     if !exists(gtf)
         error(logger, string(gtf, " not exists"))
         exit(1)
+    elseif !isfile(gtf)
+        error(logger, string(gtf, " is not file"))
+        exit(1)
     end
 
     output = absolute(Path(parsed_args["prefix"]))
@@ -61,7 +64,7 @@ function main()
     end
 
     info(logger, string("reading from ", gtf))
-    data = Genomic.load_GTF(gtf)
+    data = Genomic.load_GTF(string(gtf))
     
     # iterover transcripts
     mt_lst = Vector{Genomic.BED}()
@@ -92,7 +95,7 @@ function main()
             ], ";"),
             ".", en.Strand
         )
-
+        # println(string(bed))
         if uppercase(en.Chrom) == "MT"
             push!(mt_lst, bed)
         else
@@ -143,7 +146,8 @@ function main()
 
     info(logger, "write utr")
     utr = string(output, "_utr.bed")
-    temp_utr = string(utr, ".tmp")
+    temp_utr = string(utr) # , ".tmp"
+    println(temp_utr)
     open(temp_utr, "w+") do w
         append!(mt_lst, utr_lst)
         for i = sort(mt_lst)
@@ -152,8 +156,8 @@ function main()
         close(w)
     end
 
-    call(`bedtools merge -i $temp_utr`, utr)
-    rm(temp_utr)
+    # call(`bedtools merge -s -i $temp_utr`, utr)
+    # rm(temp_utr)
 
     exon_bed = string(output, "_exon.bed")
     open(exon_bed, "w+") do w
