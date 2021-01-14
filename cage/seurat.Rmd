@@ -1,0 +1,217 @@
+---
+title: "Seurat"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(Seurat)
+library(data.table)
+library(stringr)
+library(openxlsx)
+library(Matrix)
+library(trqwe)
+library(ggplot2)
+library(doMC)
+```
+
+## Including Plots
+
+```{r pressure, echo=FALSE}
+fs = list.files("/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/", pattern = "csv.gz$", full.names = T)
+
+data = NULL
+for (f in fs) {
+    key = str_replace_all(basename(f), ".csv.gz", "")
+    
+    if (str_detect(key, "bak")) {
+        next
+    }
+    
+    print(key)
+    temp = fread(f)
+    temp = as.data.frame(temp)
+    rownames(temp) <- temp$V1
+    temp = temp[, colnames(temp) != "V1"]
+    
+    colnames(temp) = paste(colnames(temp), key, sep = "_")
+    
+    if(is.null(data)) {
+        data = temp
+    } else {
+        data = cbind(data, temp[rownames(data), ])
+    }
+}
+
+mcsaveRDS(data, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/raw_counts.rds")
+```
+
+
+### 
+```{r}
+meta = read.xlsx("/mnt/raid64/ATS/Personal/zhangyiming/sample_info.xlsx")
+
+temp = data.frame(
+    Cells=colnames(data),
+    Patient=sapply(colnames(data), function(x) { str_split(x, "_")[[1]][2] })
+)
+
+meta = merge(temp, meta, by.x = "Patient", by.y = "X3")
+rownames(meta) <- meta$Cells
+
+sc_meta = readRDS("/mnt/raid64/Covid19_Gravida/rds/meta_rm_doublets.rds")
+
+meta$CellType = sc_meta[rownames(meta), "CellType"]
+
+saveRDS(meta, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/meta.rds")
+```
+
+
+```{r}
+data = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/raw_counts.rds")
+
+
+rs = rowSums(data, na.rm = T)
+cs = colSums(data, na.rm = T)
+
+
+plot(density(rs))
+plot(density(cs))
+```
+
+
+```{r}
+data1 = Matrix(as.matrix(data[rs > 500, ]))
+
+meta = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/meta.rds")
+
+data1[is.na(data1)] = 0
+
+meta = meta[!is.na(meta$CellType), ]
+
+obj <- CreateSeuratObject(data1[, rownames(meta)], meta.data = meta)
+
+# saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/seurat_obj.rds")
+```
+
+
+```{r}
+obj = NormalizeData(obj, normalization.method = "LogNormalize", scale.factor = 10000)
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 2000)
+obj <- ScaleData(obj, features = rownames(obj))
+```
+
+
+```{R}
+obj = RunPCA(obj, features = VariableFeatures(object = obj))
+
+ElbowPlot(obj)
+```
+
+```{R}
+obj <- FindNeighbors(obj, dims = 1:10)
+# obj <- FindClusters(obj, resolution = 0.5)
+obj <- RunUMAP(obj, dims = 1:10)
+```
+
+
+```{r fig.height=6, fig.width=6}
+DimPlot(obj, reduction = "umap", group.by = "CellType", label = T) +
+    theme(legend.position = "none")
+```
+
+
+```{r fig.height=6, fig.width=6}
+obj@meta.data$group = str_replace_all(obj@meta.data$Patient.ID, "\\d$", "")
+DimPlot(obj, reduction = "umap", group.by = "group", label = T)
+```
+
+```{R}
+saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/seurat_obj.rds")
+```
+
+
+
+```{r}
+markers = NULL
+for (i in unique(obj@meta.data$CellType)) {
+    print(i)
+    temp = FindMarkers(obj, ident.1 = i, group.by = "CellType")
+    temp$gene = rownames(temp)
+    temp$CellType = i
+    markers = rbind(markers, temp)
+}
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/markers_between_ßcelltypes.rds")
+```
+
+
+```{r}
+
+obj@meta.data$temp_group = paste(obj@meta.data$CellType, obj@meta.data$group, sep = "|")
+
+registerDoMC(4)
+temp = foreach (i = unique(obj@meta.data$CellType), .errorhandling = "pass") %dopar% {
+    print(i)
+    markers = NULL
+    for (j in c("NCovM", "NCovS")) {
+        temp = FindMarkers(obj, ident.1 = paste(i, j, sep = "|"), ident.2 = paste(i, "HN", sep = "|"), group.by = "temp_group")
+        temp$gene = rownames(temp)
+        temp$CellType = i
+        temp$comp = paste(j, "HN", sep = " - ")
+        markers = rbind(markers, temp)
+    }
+    
+    for (j in c("PCovM", "PCovS")) {
+        temp = FindMarkers(obj, ident.1 = paste(i, j, sep = "|"), ident.2 = paste(i, "HP", sep = "|"), group.by = "temp_group")
+        temp$gene = rownames(temp)
+        temp$CellType = i
+        temp$comp = paste(j, "HP", sep = " - ")
+        markers = rbind(markers, temp)
+    }
+    
+    temp = FindMarkers(obj, ident.1 = paste(i, "NCovS", sep = "|"), ident.2 = paste(i, "NCovM", sep = "|"), group.by = "temp_group")
+    temp$gene = rownames(temp)
+    temp$CellType = i
+    temp$comp = "NCovS - NCovM"
+    markers = rbind(markers, temp)
+    
+    temp = FindMarkers(obj, ident.1 = paste(i, "PCovS", sep = "|"), ident.2 = paste(i, "PCovM", sep = "|"), group.by = "temp_group")
+    temp$gene = rownames(temp)
+    temp$CellType = i
+    temp$comp = "PCovS - PCovM"
+    markers = rbind(markers, temp)
+    return (markers)
+}
+
+markers = NULL
+for (i in temp) {
+    if(is.null(i)) {
+        next
+    }
+    markers = rbind(markers, i)
+}
+
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/markers_between_groups.rds")
+```
+
+
+```{R}
+test_xu <- read.delim("/mnt/raid64/ATS/Personal/zhangyiming/test_xu")
+len_list = vector('list',length=nrow(test_xu))
+for(i in seq(nrow(test_xu))){
+  st_arr = as.numeric(strsplit(as.character(test_xu[i,'st_arr']),',')[[1]])
+  en_arr = as.numeric(strsplit(as.character(test_xu[i,'en_arr']),',')[[1]])
+  len_list[[i]] = st_arr-en_arr
+  break
+}
+len_arr = unlist(len_list)
+plot.new()
+plot(density(abs(len_arr)),title('fragment size distribution'),xlim=c(0,500))
+```
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
