@@ -157,45 +157,65 @@ module EM
         return res
     end
 
+    # x_arr = [15398]
+    # l_arr = [364]
+    # r_arr = [NaN]
+    # s_arr = [NaN]
+    # theta = 679
+    # pmf_s_dis_arr = [0.05006210271105108, 0.6635805116539707, 0.12969055581643701, 0.08371290374637089, 0.030419909310172875, 0.04251770157454482, 1.6315187452619323e-5]
+    # s_dis_arr = []
+    # do_log = false
     function lik_lsr_t0(
-        x_arr::Vector, l_arr::Vector, r_arr::Vector, s_arr::Vector, 
+        x_arr::Vector{Int64}, l_arr::Vector{Int64}, r_arr::Vector{Float64}, s_arr::Vector{Float64}, 
         theta::Number, pmf_s_dis_arr::Vector, s_dis_arr::Vector; do_log::Bool=false)::Vector
         s_len = length(s_dis_arr)
 
+        # x_arr, l_arr, r_arr, res = [x_arr], [l_arr], [r_arr], zeros(1)
+        res = zeros(1)
+        oth_inds = isnan.(s_arr)
+        valid_inds = 1 .- oth_inds
         try
-            res = zeros(len(x_arr))
+            res = zeros(length(x_arr))
             oth_inds = isnan.(s_arr)
             valid_inds = 1 .- oth_inds
         catch e
-            x_arr, l_arr, r_arr, res = [x_arr], [l_arr], [r_arr], zeros(1)
-            oth_inds = [isnan.(s_arr)]
-            valid_inds = [1 .- oth_inds]
+            # do nothing
         end
 
         n_valid_inds = sum(valid_inds)
-        n_other_inds = sum(oth_inds)
 
+        while isa(n_valid_inds, Array)
+            n_valid_inds = sum(n_valid_inds)
+        end
+        # println(n_valid_inds)
+        n_other_inds = sum(oth_inds)
+        while isa(n_other_inds, Array)
+            n_other_inds = sum(n_other_inds)
+        end
+        # println(n_other_inds)
         if n_valid_inds > 0
             res[valid_inds] = lik_l_xt(x_arr[valid_inds], l_arr[valid_inds], theta, log)
         end
-        if ! any(oth_inds)
+        if !any(oth_inds)
             return res
         end
 
         tmp_sum = zeros(n_other_inds)
-        for i = 1:length(s_len)
-            tmp1 = lik_r_s(r_arr[oth_inds], s_dis_arr[i])
-            tmp2 = 1
-            tmp3 = lik_l_xt(x_ar[oth_inds], l_arr[oth_inds], theta, log)
 
-            tmp_sum .+= tmp1 .* tmp2 .* tmp3 .* pmf_s_dis_arr[i]
-        
-        end
+        if s_len > 0
+            for i = 1:length(s_len)
+                tmp1 = lik_r_s(r_arr[oth_inds], s_dis_arr[i])
+                tmp2 = 1
+                tmp3 = lik_l_xt(x_arr[oth_inds], l_arr[oth_inds], theta, log)
 
-        if do_log
-            res[oth_inds] = log(tmp_sum)
-        else
-            res[oth_inds] = tmp_sum
+                tmp_sum .+= tmp1 .* tmp2 .* tmp3 .* pmf_s_dis_arr[i]
+            end
+
+            if do_log
+                res[oth_inds] = log(tmp_sum)
+            else
+                res[oth_inds] = tmp_sum
+            end
         end
         return res
     end
