@@ -1,0 +1,245 @@
+---
+title: "Untitled"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r include=FALSE}
+library(ggplot2)
+library(reshape2)
+library(stringr)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/peaks.txt", sep = "\t", header = T)
+
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+
+temp = apply(data, 2, function(col) {
+    col / sum(col)
+})
+
+
+temp = melt(as.matrix(temp))
+temp = temp[temp$Var2 != "CTCF", ]
+peaks = temp
+peaks$source = "ATS"
+```
+
+
+```{R}
+ggplot(temp, aes(x=Var1, y=value, color=Var2)) +
+    geom_line() +
+    facet_wrap(.~Var2)
+```
+
+
+```{r pressure, echo=FALSE}
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/cage_sel.txt", sep = "\t", header = T)
+
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+
+# temp = apply(data, 2, function(col) {
+#     col / sum(col) * 10›
+# })
+temp = data
+
+temp = melt(as.matrix(temp))
+temp = temp[temp$Var2 != "CTCF", ]
+peaks = temp
+peaks$source = "ATS"
+```
+
+
+```{R}
+ggplot(temp, aes(x=Var1, y=value, color=Var2)) +
+    geom_line() +
+    facet_wrap(.~Var2)
+```
+
+
+```{r pressure, echo=FALSE}
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/cage.txt", sep = "\t", header = T)
+
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+
+# temp = apply(data, 2, function(col) {
+#     col / sum(col)
+# })
+temp = data
+
+temp = melt(as.matrix(temp))
+temp = temp[temp$Var2 != "CTCF", ]
+temp$source = "CAGE"
+peaks = rbind(peaks, temp)
+```
+
+
+```{R}
+ggplot(temp, aes(x=Var1, y=value, color=Var2)) +
+    geom_line() +
+    facet_wrap(.~Var2)
+```
+
+
+```{r}
+for (i in unique(peaks$Var2)) {
+    p <- ggplot(peaks[peaks$Var2 == i, ], aes(x=Var1, y=value, color=source)) +
+        geom_line() +
+        labs(title = i, x = "Distance to TSS (bp)", y="Average Cov")
+    print(p)
+}
+```
+
+
+```{r pressure, echo=FALSE}
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/promoter.txt", sep = "\t", header = T)
+
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+
+# temp = apply(data, 2, function(col) {
+#     col / sum(col)
+# })
+temp = data
+
+temp = melt(as.matrix(temp))
+temp = temp[temp$Var2 != "CTCF", ]
+temp$source = "Annotation"
+# peaks = rbind(peaks, temp)
+```
+
+
+```{R}
+ggplot(temp, aes(x=Var1, y=value, color=Var2)) +
+    geom_line() +
+    facet_wrap(.~Var2)
+```
+
+
+## compare different standard
+
+```{r}
+fs = list.files("/mnt/raid64/ATS/Personal/zhangyiming/cage_sel_hm/",  pattern = "_.txt", full.names = T)
+
+peaks = NULL
+for (f in fs) {
+    key = str_replace_all(basename(f), "(peak_region_|_.txt)", "")
+    key = str_split(key, "_")[[1]]
+    data = read.table(f, sep = "\t", header = T)
+
+    rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+    temp = melt(as.matrix(data))
+    temp = temp[temp$Var2 != "CTCF", ]
+    temp$freq = as.numeric(key[1])
+    temp$count  = as.numeric(key[2])
+   
+    peaks = rbind(peaks, temp)
+}
+```
+
+
+```{r fig.height=10, fig.width=10}
+for (i in unique(peaks$Var2)) {
+    p <- ggplot(peaks[peaks$Var2 == i, ], aes(x=Var1, y=value, color = Var2)) +
+        geom_line() + labs(title = i) +
+        facet_grid(freq~count)
+    print(p)
+}
+```
+
+
+```{R}
+test_xu <- read.delim("/mnt/raid64/ATS/Personal/zhangyiming/NHC2")
+
+data = test_xu[test_xu$alpha_arr != "", ]
+len_list = vector('list',length=nrow(test_xu))
+for(i in seq(nrow(test_xu))){
+  st_arr = as.numeric(strsplit(as.character(test_xu[i,'st_arr']),',')[[1]])
+  en_arr = as.numeric(strsplit(as.character(test_xu[i,'en_arr']),',')[[1]])
+  len_list[[i]] = st_arr-en_arr
+}
+len_arr = unlist(len_list)
+plot.new()
+plot(density(abs(len_arr)),title('fragment size distribution'),xlim=c(0,500))
+
+```
+
+
+```{r pressure, echo=FALSE}
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/peaks/NHC2", sep = "\t", header = T)
+
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+
+# temp = apply(data, 2, function(col) {
+#     col / sum(col)
+# })
+temp = data
+
+temp = melt(as.matrix(temp))
+temp = temp[temp$Var2 != "CTCF", ]
+temp$source = "Annotation"
+# peaks = rbind(peaks, temp)
+```
+
+
+```{R}
+ggplot(temp, aes(x=Var1, y=value, color=Var2)) +
+    geom_line() +
+    facet_wrap(.~Var2)
+```
+
+
+```{R}
+test_xu <- read.delim("/mnt/raid64/ATS/Personal/zhangyiming/NHC2_jl")
+
+data = test_xu[test_xu$alpha_arr != "", ]
+len_list = vector('list',length=nrow(test_xu))
+for(i in seq(nrow(test_xu))){
+  st_arr = as.numeric(strsplit(as.character(test_xu[i,'st_arr']),',')[[1]])
+  en_arr = as.numeric(strsplit(as.character(test_xu[i,'en_arr']),',')[[1]])
+  len_list[[i]] = st_arr-en_arr
+}
+len_arr = unlist(len_list)
+len_arr = len_arr[abs(len_arr)> 10]
+plot.new()
+plot(density(abs(len_arr)),title('fragment size distribution'),xlim=c(0,500))
+
+```
+
+```{r pressure, echo=FALSE}
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/peaks/NHC2_jl_all", sep = "\t", header = T)
+
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+
+# temp = apply(data, 2, function(col) {
+#     col / sum(col)
+# })
+temp = data
+
+temp = melt(as.matrix(temp))
+temp = temp[temp$Var2 != "CTCF", ]
+temp$source = "Annotation"
+# peaks = rbind(peaks, temp)
+```
+
+
+```{R}
+ggplot(temp, aes(x=Var1, y=value, color=Var2)) +
+    geom_line() +
+    facet_wrap(.~Var2)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

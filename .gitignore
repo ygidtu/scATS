@@ -158,3 +158,6 @@ errors/
 .vscode
 *.txt
 *.pdf
+
+*.sh
+*.tsv
