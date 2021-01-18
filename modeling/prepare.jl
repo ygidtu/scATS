@@ -28,7 +28,7 @@ function parse_commandline()
         "--expand", "-e"
             help = "The distance that utr to expand."
             arg_type = Int
-            default = 100
+            default = 500
     end
 
     return parse_args(s)
@@ -69,10 +69,8 @@ function main()
     data = Genomic.load_GTF(string(gtf))
     
     # iterover transcripts
-    # mt_lst = Vector{Genomic.BED}()
     utr_lst = Dict{String, Vector{Genomic.BED}}()
-    # intron_lst = Vector{Genomic.BED}()
-    # exon_lst = Vector{Genomic.BED}()
+
     info(logger, string("iter over all transcripts: ", length(data["transcript"])))
     @showprogress for (tid, transcript) in data["transcript"]
         if !haskey(data["exon"], tid)
@@ -89,7 +87,7 @@ function main()
 
         # collect the exon closest to utr region
         bed = Genomic.BED(
-            Chrom = en.Chrom, Start = en.Start, End = en.End,
+            Chrom = en.Chrom, Start = max(1, en.Start - expand), End = en.End + expand,
             Name = join([
                 get(en.Attributes, "gene_biotype", "unknown"), 
                 en.GeneID, en.TranscriptID, 
@@ -97,104 +95,28 @@ function main()
             ], ";"),
             Score = ".", Strand = en.Strand
         )
-        # println(string(bed))
-        # if uppercase(en.Chrom) == "MT"
-        #     push!(mt_lst, bed)
-        # else
-        #     push!(utr_lst, bed)
-        # end
 
         key = string(bed.Chrom, "#", bed.Strand)
 
         temp = get(utr_lst, key, Vector())
         push!(temp, bed)
         utr_lst[key] = temp
-
-        # collect the intron
-        #=
-        for i = 2:2:length(exons)
-            bed = Genomic.BED(
-                exons[i].Chrom,
-                exons[i-1].End + 1,
-                exons[i].Start - 1,
-                join([
-                    exons[i].Chrom, exons[i].GeneID, exons[i].TranscriptID,
-                    get(exons[i].Attributes, "gene_name", "unknown")
-                ], ";"),
-                ".", exons[i].Strand
-            )
-            push!(intron_lst, bed)
-
-            if i == 2
-                bed = Genomic.BED(
-                    exons[i-1].Chrom,
-                    exons[i-1].Start,
-                    exons[i-1].End,
-                    join([
-                        exons[i-1].Chrom, exons[i-1].GeneID, exons[i-1].TranscriptID,
-                        get(exons[i-1].Attributes, "gene_name", "unknown")
-                    ], ";"),
-                    ".", exons[i-1].Strand
-                )
-                push!(exon_lst, bed)
-            end
-            
-            bed = Genomic.BED(
-                exons[i].Chrom,
-                exons[i].Start,
-                exons[i].End,
-                join([
-                    exons[i].Chrom, exons[i].GeneID, exons[i].TranscriptID,
-                    get(exons[i].Attributes, "gene_name", "unknown")
-                ], ";"),
-                ".", exons[i].Strand
-            )
-            push!(exon_lst, bed)
-        end
-        =#
     end
 
     info(logger, "write utr")
-    # utr = string(output, "_utr.bed")
-    # temp_utr = string(utr) # , ".tmp"
-    # println(temp_utr)
-    open(output, "w+") do w
-        # append!(mt_lst, utr_lst)
-
-        for lst = values(utr_lst)
-            for i = Genomic.merge(lst)
-                write(w, string(Genomic.get_bed(i, expand), '\n'))
-            end
-        end
-
-        # for i = sort(mt_lst)
-        #     write(w, string(i, '\n'))
-        # end
-        close(w)
+    
+    res = Vector()
+    for lst = values(utr_lst)
+        append!(res, Genomic.merge(lst))
     end
 
-    # call(`bedtools merge -s -i $temp_utr`, utr)
-    # rm(temp_utr)
+    open(output, "w+") do w
+        for i = sort(res)
+            write(w, string(Genomic.get_bed(i), '\n'))
+        end
 
-    # exon_bed = string(output, "_exon.bed")
-    # open(exon_bed, "w+") do w
-    #     for i = sort(exon_lst)
-    #         write(w, string(i, '\n'))
-    #     end
-    # end
-
-    # info(logger, "write intron")
-    # intron_bed = string(output,  "_intron.bed")
-    # temp_intron = string(intron_bed, ".tmp")
-    # open(temp_intron, "w+") do w
-    #     intron_lst = Genomic.merge(intron_lst)
-    #     for i = sort(intron_lst)
-    #         write(w, string(i, '\n'))
-    #     end
-    #     close(w)
-    # end
-    # call(`bedtools subtract -a $temp_intron -b $exon_bed`, intron_bed)
-    # rm(temp_intron)
+        close(w)
+    end
 end
 
 main()

@@ -71,3 +71,36 @@ optional arguments:
   --verbose             whether to display additional message
   -h, --help            show this help message and exit
 ```
+
+### 3. merge output peaks
+
+```bash
+> julia merge.jl --help
+usage: merge.jl -o OUTPUT [-e EXPAND] [-h] ats...
+
+positional arguments:
+  ats                  Path to atsmix output file
+
+optional arguments:
+  -o, --output OUTPUT  Path to output.
+  -e, --expand EXPAND  How many bp to expand (type: Int64, default:
+                       100)
+  -h, --help           show this help message and exit
+```
+
+### 4. quantification
+
+```bash
+> julia quant.jl --help
+usage: quant.jl -i INPUT -c CELLRANGER -o OUTPUT [-p PROCESS] [-h]
+
+optional arguments:
+  -i, --input INPUT     Path to merged peaks bed
+  -c, --cellranger CELLRANGER
+                        Path to cellranger outs directory
+  -o, --output OUTPUT   Prefix of output file
+  -p, --process PROCESS
+                        How many processes to use (type: Int64,
+                        default: 1)
+  -h, --help            show this help message and exit
+```

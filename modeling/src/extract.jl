@@ -23,7 +23,7 @@ module Extract
         Memento.register(LOGGER)
     end
 
-    export  BEDRecord, new_bed, ExtractedData, get_record_from_bam, run, setLevel
+    export  BEDRecord, new_bed, ExtractedData, get_record_from_bam, run, setLevel, get_bed_short
 
     function setLevel(level::String)
         setlevel!(LOGGER, level)
@@ -50,30 +50,11 @@ module Extract
     
     function new_bed(line::String)::BEDRecord  # ; chromosomes::Dict{String, String}=nothing
         lines = split(strip(line), "\t")
-        # chrom = lines[2]
-        # if !isnothing(chromosomes) && length(chromosomes) > 0
-        #     if !haskey(chromosomes, chrom)
-        #         if startswith(chrom, "chr")
-        #             chrom = replace(chrom, "chr"=>"")
-        #         else
-        #             chrom = string("chr", chrom)
-        #         end
-
-        #         if !haskey(chromosomes, chrom)
-        #             return BEDRecord("", 0, 0, "", "", "")
-        #         end
-        #     end
-        # end
-
-        # return BEDRecord(
-        #     chrom, parse(Int64, lines[3]), parse(Int64, lines[4]),
-        #     lines[6], lines[11], lines[1]
-        # )
         
         if length(lines) >= 6
             return BEDRecord(
-                replace(lines[1], r"chr" => ""), parse(Int64, lines[2]), parse(Int64, lines[3]),
-                lines[6], lines[4], lines[5]
+                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),
+                lines[6], lines[4], strip(lines[5])
             )
         elseif length(lines) == 3
             return BEDRecord(
@@ -91,18 +72,35 @@ module Extract
         end
     end
 
+    function get_bed_short(bed::BEDRecord)::String
+        return Formatting.format(
+            FormatExpr("{}:{}-{}:{}"),
+            self.chrom, self.start_pos, self.end_pos, self.strand
+        )
+    end
+
     @with_kw struct ExtractedData
         utr::BEDRecord
         st_arr::Vector
         en_arr::Vector
+        real_st::Vector
+        real_en::Vector
     end
 
-    function get_hash(data::ExtractedData)::String
-        return string(
-            join(sort(data.st_arr), ","), "|", 
-            join(sort(data.en_arr), ","), "|",
-            data.utr.end_pos - data.utr.start_pos
+    Base.show(io::IO, self::ExtractedData) = print(
+        io,
+        Formatting.format(
+            FormatExpr("utr: {}\nst_arr: {}\nen_arr: {}\n"), # real_st: {}\nreal_en: {}
+            string(self.utr),
+            join(map(string, self.st_arr), ","),
+            join(map(string, self.en_arr), ","),
+            # join(map(string, self.real_st), ","),
+            # join(map(string, self.real_en), ",")
         )
+    )
+
+    function get_utr(data::ExtractedData)::String
+        return string(data.utr.chrom, "_", data.utr.start_pos, "_", data.utr.end_pos, "_", data.utr.strand)
     end
 
     function filter(record)::Bool
@@ -110,16 +108,20 @@ module Extract
         Filter low quality reads
         =#
 
+        if !BAM.ismapped(record)
+            return false
+        end
+
         auxdata = Dict(BAM.auxdata(record))
         if haskey(auxdata, "NH") && auxdata["NH"] > 1
             return false
         end
 
-        if BAM.flag(record) & SAM.FLAG_DUP > 0 || BAM.flag(record) & SAM.FLAG_QCFAIL > 0
+        if BAM.flag(record) & SAM.FLAG_QCFAIL > 0
             return false
         end
 
-        return haskey(auxdata, "CB") && haskey(auxdata, "UB")
+        return true # haskey(auxdata, "CB") && haskey(auxdata, "UB")
     end
 
     function determine_strand(record)::String
@@ -157,11 +159,16 @@ module Extract
 
         st_arr = Vector()
         en_arr = Vector()
+        real_st, real_en = Vector(), Vector()
         
         for record in eachoverlap(reader, utr.chrom, utr.start_pos:utr.end_pos)
             if !filter(record)
                 continue
             end
+
+            if BAM.flag(record) & SAM.FLAG_PROPER_PAIR == 0
+                continue
+            end                
             
             # Only kept R2
             if BAM.flag(record) & SAM.FLAG_READ1 > 0
@@ -184,27 +191,37 @@ module Extract
                 continue
             end
 
+            # read strand
+            strand = determine_strand(record)
+
+            if strand != utr.strand
+                continue
+            end
+
             # R2 end site, for Rn
-            end_site = utr.strand == "-" ? BAM.leftposition(record) : BAM.rightposition(record)
-            
+            end_site = strand == "-" ? BAM.leftposition(record) : BAM.rightposition(record)
+
             # calcualte R1 start site  based on SE mode and strand
             start_site = NaN
             if single_end_mode
                 push!(st_arr, start_site)
             else
                 start_site = BAM.nextposition(record)
-                if utr.strand == "-"
+                if strand == "-"
                     start_site = start_site + BAM.alignlength(record)
                 end
+
                 push!(st_arr, start_site - utr_site)
+                push!(real_st, start_site)
             end
             push!(en_arr, end_site - utr_site)
+            push!(real_en, end_site)
         end
 
         if length(st_arr) > min_reads
             push!(
                 res, 
-                ExtractedData(utr, st_arr, en_arr)
+                ExtractedData(utr, st_arr, en_arr, real_st, real_en)
             )
         end
         close(reader)
@@ -229,6 +246,7 @@ module Extract
         min_ws::Float64 = 0.01, 
         # maximum std for ATS site
         max_beta::Float64 = 50.0,
+        seed::Int=2,
         # inference with fixed parameters
         fixed_inference_flag::Bool = false,
 
@@ -236,9 +254,11 @@ module Extract
         single_end_mode::Bool = false,
         verbose::Bool = false,
         using_R::Bool = false,
-        error_log=nothing
-    )::Vector{String}
-        res = Vector{String}()
+        error_log=nothing,
+        debug::Bool = false,
+        density=nothing
+    )::Vector
+        res = Vector()
 
         utr = data.utr
         en_arr = data.en_arr
@@ -249,28 +269,34 @@ module Extract
         temp_res = runner(
             n_max_ats, n_min_ats, 
             st_arr , en_arr; 
-            L = utr.end_pos - utr.start_pos, 
+            L = abs(utr.end_pos - utr.start_pos), 
             mu_f=mu_f, min_ws = min_ws, 
             sigma_f = sigma_f, max_beta=max_beta,
             fixed_inference_flag = fixed_inference_flag, 
             single_end_mode = single_end_mode, 
-            verbose = verbose, error_log=error_log
+            verbose = verbose, error_log=error_log,
+            seed=seed, debug=density
         )
         if isnothing(temp_res.bic) || isinf(temp_res.bic)
             return res
         end
 
-        push!(
-            res, 
-            Formatting.format(
-                FormatExpr("{}:{}-{}:{}\t{}\t{}\t{}"), 
-                data.utr.chrom, data.utr.start_pos, data.utr.end_pos, data.utr.strand,
-                join(map(string, data.st_arr), ","),
-                join(map(string, data.en_arr), ","),
-                string(temp_res)
+        if debug
+            push!(res, temp_res)
+        else
+            push!(
+                res, 
+                Formatting.format(
+                    FormatExpr("{}:{}-{}:{}\t{}\t{}\t{}"), 
+                    data.utr.chrom, data.utr.start_pos, data.utr.end_pos, data.utr.strand,
+                    join(map(string, data.st_arr), ","),
+                    join(map(string, data.en_arr), ","),
+                    string(temp_res)
+                )
             )
-        )
+        end
 
+        
         return res
     end
 end

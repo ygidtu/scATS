@@ -34,20 +34,22 @@ module ATSMIX
         sigma_f::Number
         unif_log_lik::Number
         max_beta::Number
+        seed::Int
     end
 
     function createParam(
         st_arr::Vector, en_arr::Vector, 
         mu_f::Number, sigma_f::Number, 
         L::Number, max_beta::Number;
-        single_end_mode::Bool = false
+        single_end_mode::Bool = false,
+        seed::Int=2
     )::Param
         unif_log_lik = lik_f0(L; do_log = true)
         if single_end_mode
             st_arr = en_arr .+ mu_f
             unif_log_lik = lik_f0_single(mu_f, sigma_f, L; do_log = true)
         end
-        return Param(st_arr, en_arr, mu_f, sigma_f, unif_log_lik, max_beta)
+        return Param(st_arr, en_arr, mu_f, sigma_f, unif_log_lik, max_beta, seed)
     end
 
     mutable struct EMData
@@ -205,7 +207,7 @@ module ATSMIX
     end
 
     # generate random k such that each K is a group and no consecutive elements are the same
-    function gen_k_arr(K::Int64, n::Int64)::Vector{Int64}
+    function gen_k_arr(K::Int64, n::Int64, seed::Int=2)::Vector{Int64}
 
         if K <= 1
             return [K for _ in 1:n]
@@ -219,7 +221,7 @@ module ATSMIX
                 pool = shuffle(pool)
 
                 if pool[1] == last
-                    swap_with = rand(1:length(pool))
+                    swap_with = rand(MersenneTwister(seed), 1:length(pool))
                     pool[1], pool[swap_with] = pool[swap_with], pool[1]
                 end
 
@@ -257,7 +259,7 @@ module ATSMIX
         N = n_frag
         K = length(alpha_arr)
 
-        ws = rand(K+1) .+ 1
+        ws = rand(MersenneTwister(params.seed), K+1) .+ 1
         if K == 0
             ws[1] = ws[1] + 1
         else
@@ -265,7 +267,7 @@ module ATSMIX
         end
         ws = ws ./ sum(ws)
 
-        k_arr = gen_k_arr(length(alpha_arr), nround)
+        k_arr = gen_k_arr(length(alpha_arr), nround, params.seed)
         log_zmat = zeros( N, K + 1)
 
         for k = 1:K
@@ -334,7 +336,7 @@ module ATSMIX
         alpha_arr = para_mat.alpha_arr
         beta_arr = para_mat.beta_arr
 
-        k_arr = gen_k_arr(length(alpha_arr), nround)
+        k_arr = gen_k_arr(length(alpha_arr), nround, params.seed)
         log_zmat = zeros(length(params.st_arr), K+1)
 
         for k = 1:(K+1)
@@ -398,12 +400,12 @@ module ATSMIX
         return EMData(ws, alpha_arr, beta_arr, lb_arr, bic, nothing)
     end
 
-    function init_para(n_ats::Int, st_arr::Vector, data::EMData)::EMData
+    function init_para(n_ats::Int, st_arr::Vector, data::EMData, params::Param)::EMData
         min_pos = minimum(st_arr)
         max_pos = maximum(st_arr)
 
         data.alpha_arr =  min_pos .+ (max_pos - min_pos) .* rand(n_ats)
-        data.beta_arr = rand(Uniform(10, 70), n_ats)
+        data.beta_arr = rand(MersenneTwister(params.seed), Uniform(10, 70), n_ats)
 
         return data
     end
@@ -416,12 +418,12 @@ module ATSMIX
 
         for i = 1:n_trial
             try
-                ws = rand(n_ats + 1) .+ 1
+                ws = rand(MersenneTwister(params.seed), n_ats + 1) .+ 1
                 ws[n_ats + 1] = ws[n_ats + 1] - 1
                 ws = ws / sum(ws)
 
                 # initilize alpha_arr and beta_arr, considered pre_alpha_arr and pre_beta_arr
-                para_mat = init_para(n_ats, params.st_arr, emptyData())
+                para_mat = init_para(n_ats, params.st_arr, emptyData(), params)
 
                 if verbose
                     # println(para_mat)
@@ -505,7 +507,7 @@ module ATSMIX
 
         # fragment size information
         # fragment length mean
-        mu_f::Int = 350, 
+        mu_f::Int = 300, 
         # fragment length standard deviation
         sigma_f::Int = 50, 
 
@@ -513,19 +515,23 @@ module ATSMIX
         # minimum weight of ATS site
         min_ws::Float64 = 0.01, 
         # maximum std for ATS site
-        max_beta::Float64 = 30.0,
+        max_beta::Float64 = 50.0,
+        seed::Int=2,
         # inference with fixed parameters
         fixed_inference_flag::Bool = false,
 
         #single end mode
         single_end_mode::Bool = false,
         verbose::Bool = false,
-        error_log=nothing
+        error_log=nothing,
+        debug=nothing
     )::EMData
 
         script = joinpath(@__DIR__, "atsmix.R")
+        # println(seed)
         try
             atsmix = R"""
+            set.seed($seed)
             source($script)
             atsmix(n_max_ats=$n_max_ats, 
                     n_min_ats=$n_min_ats,
@@ -537,7 +543,8 @@ module ATSMIX
                     min_ws = $min_ws,
                     max_beta = $max_beta,
                     fixed_inference_flag = FALSE,
-                    single_end_mode = $single_end_mode
+                    single_end_mode = $single_end_mode,
+                    debug_pdf=$debug
             )
             """
 
@@ -593,8 +600,8 @@ module ATSMIX
                 ))
                 close(w)
             end
-
-            warn(LOGGER, e)
+            println(e)
+            # debug(LOGGER, e)
             return emptyData()
         end
     end
@@ -616,15 +623,16 @@ module ATSMIX
 
         # fragment size information
         # fragment length mean
-        mu_f::Int = 350, 
+        mu_f::Int = 300, 
         # fragment length standard deviation
-        sigma_f::Int = 30, 
+        sigma_f::Int = 50, 
 
         # pa site information
         # minimum weight of ATS site
         min_ws::Float64 = 0.01, 
         # maximum std for ATS site
-        max_beta::Float64 = 30.0,
+        max_beta::Float64 = 50.0,
+        seed::Int=2,
 
         # inference with fixed parameters
         fixed_inference_flag::Bool = false,
@@ -653,7 +661,7 @@ module ATSMIX
             
             params = createParam(
                 st_arr, en_arr, mu_f, sigma_f, L, max_beta,
-                single_end_mode=single_end_mode
+                single_end_mode=single_end_mode, seed=seed
             )
             
             for i = n_max_ats:-1:n_min_ats
@@ -767,27 +775,38 @@ function main()
     st_arr = Vector()
     en_arr = Vector()
 
-    open("/mnt/raid64/ATS/Personal/zhangyiming/test_xu") do r
+    open("/mnt/raid64/ATS/Personal/zhangyiming/infered/NHC2_R.txt") do r
         while !eof(r)
             line = readline(r)
 
-            if startswith(line, "1:23309958-23311068:-")
+            if startswith(line, "1:6205375-6206201:+")
                 line = split(strip(line), "\t")
 
                 append!(st_arr, parse.(Int, split(line[2], ",")))
                 append!(en_arr, parse.(Int, split(line[3], ",")))
+                break
             end
         end
         close(r)
     end
     
 
-    L = 23311068 - 23309958
+    L = abs(6205375-6206201)
 
-    res = ATSMIX.fit(5, 1, st_arr , en_arr; L = L, mu_f=350, min_ws = 0.01, fixed_inference_flag = false, single_end_mode = true, verbose = true)
+    res = ATSMIX.fit_by_R(5, 1, st_arr , en_arr; L = L, mu_f=300, min_ws = 0.01, fixed_inference_flag = false, single_end_mode = true, verbose = true, seed=2)
 
     println(res)
-    
+
+    bam = "/mnt/raid61/Personal_data/zhangyiming/code/afe/modeling/bam.tsv"
+
+    ref = "/mnt/raid64/Covid19_Gravida/cellranger/Homo_sapiens/genes/genes.sorted.gtf.gz"
+
+    o = "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test.pdf"
+
+    lines = [6205375 + round(Int, i) for i = res.alpha_arr]
+    lines = join(map(string, lines), ",")
+
+    run(`sashimiplot junc --gtf $ref --bam $bam --sj 1000 --junc 1:6205075:6206501 --ie 1,1  --ps RF --ssm R1 --fileout $o --trackline $lines --focus 6205375-6206201`)
 end
 
 # main()

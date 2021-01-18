@@ -139,9 +139,7 @@ module Genomic
                 end
 
                 gtf = Genomic.create_GTF(line)
-                if gtf.Chrom != "1"
-                    break
-                end
+
                 if gtf.Type == "transcript"
                     # if there is not gene_biotype or gene_biotype is not specific types passed
                     if !haskey(gtf.Attributes, "gene_biotype") || !(gtf.Attributes["gene_biotype"] in ["antisense", "lincRNA", "protein_coding"])

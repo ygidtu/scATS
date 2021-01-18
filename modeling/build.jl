@@ -1,3 +1,9 @@
+#!/usr/bin/env julia
+
+#=
+This script is used to install julia requirements
+=#
+
 using Pkg
 
 
