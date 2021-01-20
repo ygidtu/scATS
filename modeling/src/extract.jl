@@ -53,7 +53,7 @@ module Extract
         
         if length(lines) >= 6
             return BEDRecord(
-                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),
+                replace(lines[1], "chr"=>""), parse(Int64, lines[2]), parse(Int64, lines[3]),
                 lines[6], lines[4], strip(lines[5])
             )
         elseif length(lines) == 3
@@ -83,14 +83,14 @@ module Extract
         utr::BEDRecord
         st_arr::Vector
         en_arr::Vector
-        real_st::Vector
-        real_en::Vector
+        # real_st::Vector
+        # real_en::Vector
     end
 
     Base.show(io::IO, self::ExtractedData) = print(
         io,
         Formatting.format(
-            FormatExpr("utr: {}\nst_arr: {}\nen_arr: {}\n"), # real_st: {}\nreal_en: {}
+            FormatExpr("utr: {}\nst_arr: {}\nen_arr: {}"), # \nreal_st: {}\nreal_en: {}
             string(self.utr),
             join(map(string, self.st_arr), ","),
             join(map(string, self.en_arr), ","),
@@ -159,7 +159,10 @@ module Extract
 
         st_arr = Vector()
         en_arr = Vector()
-        real_st, real_en = Vector(), Vector()
+        # real_st, real_en = Vector(), Vector()
+
+        r1 = Dict()
+        r2 = Dict()
         
         for record in eachoverlap(reader, utr.chrom, utr.start_pos:utr.end_pos)
             if !filter(record)
@@ -168,26 +171,24 @@ module Extract
 
             if BAM.flag(record) & SAM.FLAG_PROPER_PAIR == 0
                 continue
-            end                
-            
-            # Only kept R2
-            if BAM.flag(record) & SAM.FLAG_READ1 > 0
-                continue
             end
-
+            
             if !single_end_mode && !BAM.isnextmapped(record)
                 continue
             end
-
-            utr_site = utr.strand == "-" ? utr.start_pos : utr.end_pos
-
-            # R2 needs locate in UTR
-            if utr.start_pos > BAM.leftposition(record) || utr.end_pos < BAM.rightposition(record)
+            
+            # Only kept R2
+            if BAM.flag(record) & SAM.FLAG_READ1 > 0
+                r1[BAM.tempname(record)] = Dict(
+                    "start"=>BAM.leftposition(record), 
+                    "end"=>BAM.rightposition(record)
+                )
                 continue
             end
 
-            # R1 needs locate in UTR
-            if !single_end_mode && (utr.start_pos > BAM.nextposition(record) || utr.end_pos < BAM.nextposition(record) + BAM.alignlength(record))
+
+            # R2 needs locate in UTR
+            if utr.start_pos > BAM.leftposition(record) || utr.end_pos < BAM.rightposition(record)
                 continue
             end
 
@@ -198,30 +199,50 @@ module Extract
                 continue
             end
 
+            r2[BAM.tempname(record)] = Dict(
+                "start"=>BAM.leftposition(record), 
+                "end"=>BAM.rightposition(record)
+            )           
+        end
+
+        # now filter and check r1
+        for (name, site) = r2
+
+            r1_pos = get(r1, name, nothing)
+
+            if isnothing(r1_pos)
+                continue
+            end
+
+            # R1 needs locate in UTR
+            if !single_end_mode && (utr.start_pos > r1_pos["start"] || utr.end_pos < r1_pos["end"])
+                continue
+            end
+
+            utr_site = utr.strand == "-" ? utr.start_pos : utr.end_pos
+
             # R2 end site, for Rn
-            end_site = strand == "-" ? BAM.leftposition(record) : BAM.rightposition(record)
+            end_site = strand == "-" ? site["start"] : site["end"]
+
+            push!(en_arr, end_site - utr_site)
+            # push!(real_en, end_site)
 
             # calcualte R1 start site  based on SE mode and strand
             start_site = NaN
             if single_end_mode
                 push!(st_arr, start_site)
             else
-                start_site = BAM.nextposition(record)
-                if strand == "-"
-                    start_site = start_site + BAM.alignlength(record)
-                end
+                start_site = strand == "-" ? r1_pos["start"] : r1_pos["end"]
 
                 push!(st_arr, start_site - utr_site)
-                push!(real_st, start_site)
+                # push!(real_st, start_site)
             end
-            push!(en_arr, end_site - utr_site)
-            push!(real_en, end_site)
         end
 
         if length(st_arr) > min_reads
             push!(
                 res, 
-                ExtractedData(utr, st_arr, en_arr, real_st, real_en)
+                ExtractedData(utr, st_arr, en_arr) # , real_st, real_en
             )
         end
         close(reader)
@@ -264,9 +285,7 @@ module Extract
         en_arr = data.en_arr
         st_arr  = data.st_arr
 
-        runner = using_R ? ATSMIX.fit_by_R : ATSMIX.fit
-
-        temp_res = runner(
+        temp_res = ATSMIX.fit(
             n_max_ats, n_min_ats, 
             st_arr , en_arr; 
             L = abs(utr.end_pos - utr.start_pos), 
@@ -274,8 +293,8 @@ module Extract
             sigma_f = sigma_f, max_beta=max_beta,
             fixed_inference_flag = fixed_inference_flag, 
             single_end_mode = single_end_mode, 
-            verbose = verbose, error_log=error_log,
-            seed=seed, debug=density
+            error_log=error_log,
+            seed=seed, using_R = using_R
         )
         if isnothing(temp_res.bic) || isinf(temp_res.bic)
             return res
@@ -291,12 +310,13 @@ module Extract
                     data.utr.chrom, data.utr.start_pos, data.utr.end_pos, data.utr.strand,
                     join(map(string, data.st_arr), ","),
                     join(map(string, data.en_arr), ","),
+                    # join(map(string, data.real_st), ","),
+                    # join(map(string, data.real_en), ","),
                     string(temp_res)
                 )
             )
         end
 
-        
         return res
     end
 end

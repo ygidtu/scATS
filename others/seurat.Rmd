@@ -200,7 +200,39 @@ saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/markers_betw
 
 
 ```{R}
-test_xu <- read.delim("/mnt/raid64/ATS/Personal/zhangyiming/test_xu")
+test_xu <- read.delim("/mnt/raid64/ATS/Personal/zhangyiming/infered/NHC2_R.txt")
+
+
+get_data = function(path, pattern) {
+  data = read.delim(path)
+  data = data[str_detect(data$utr, pattern), ]
+  
+  if (nrow(data) < 1) {
+    return(list())
+  }
+  
+  for (i in colnames(data)) {
+    if(str_detect(data[1, i], ":")) {
+      res[[i]] = data[1, i]
+    } else if(str_detect(data[1, i], ",")) {
+      res[[i]] = as.numeric(strsplit(as.character(data[1, i]),',')[[1]])
+    } else {
+      res[[i]] = as.numeric(data[1, i])
+    }
+  }
+  
+  res
+}
+
+for (i in c("1:1212795-1214738:-", "1:975899-977241:-", "1:1307169-1308618:-")) {
+  res = get_data("/mnt/raid64/ATS/Personal/zhangyiming/infered/NHC2_R.txt", i)
+  saveRDS(res, paste0("/mnt/raid64/ATS/Personal/zhangyiming/infered/", i, ".rds"))
+}
+
+
+res = get_data()
+
+
 len_list = vector('list',length=nrow(test_xu))
 for(i in seq(nrow(test_xu))){
   st_arr = as.numeric(strsplit(as.character(test_xu[i,'st_arr']),',')[[1]])
