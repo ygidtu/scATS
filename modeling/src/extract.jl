@@ -14,7 +14,7 @@ module Extract
     include(joinpath(@__DIR__, "ATS.jl"))
 
     # Create our module level LOGGER (this will get precompiled)
-    const LOGGER = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg} | {stacktrace}")
+    const LOGGER = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
     # const LOGGER = getlogger(@__MODULE__)
 
     # Register the module level LOGGER at runtime so that folks can access the LOGGER via `get_LOGGER(MyModule)`
@@ -83,8 +83,8 @@ module Extract
         utr::BEDRecord
         st_arr::Vector
         en_arr::Vector
-        # real_st::Vector
-        # real_en::Vector
+        real_st::Vector
+        real_en::Vector
     end
 
     Base.show(io::IO, self::ExtractedData) = print(
@@ -143,26 +143,16 @@ module Extract
         return strand
     end
 
-    function get_record_from_bam(
-        path::String, 
-        utr::BEDRecord;
-        single_end_mode::Bool = false,
-        min_reads::Int=0,
-        distance::Int=1500
-    )::Vector{ExtractedData}
-        bai = string(path, ".bai")
-        promoter_sites = Dict{BEDRecord, Vector}()
-        reader = open(BAM.Reader, path, index=bai)
 
+    function read_from_bam(path::String,  utr::BEDRecord; single_end_mode::Bool = false, min_reads::Int=0)::Vector{ExtractedData}
+        bai = string(path, ".bai")
+        reader = open(BAM.Reader, path, index=bai)
         sites = Dict{}
         res = Vector()
 
-        st_arr = Vector()
-        en_arr = Vector()
-        # real_st, real_en = Vector(), Vector()
-
-        r1 = Dict()
-        r2 = Dict()
+        st_arr, en_arr = Vector(), Vector()
+        real_st, real_en = Vector(), Vector()
+        r1, r2 = Dict(), Dict()
         
         for record in eachoverlap(reader, utr.chrom, utr.start_pos:utr.end_pos)
             if !filter(record)
@@ -186,7 +176,6 @@ module Extract
                 continue
             end
 
-
             # R2 needs locate in UTR
             if utr.start_pos > BAM.leftposition(record) || utr.end_pos < BAM.rightposition(record)
                 continue
@@ -206,6 +195,7 @@ module Extract
         end
 
         # now filter and check r1
+        utr_site = utr.strand == "-" ? utr.start_pos : utr.end_pos
         for (name, site) = r2
 
             r1_pos = get(r1, name, nothing)
@@ -219,35 +209,95 @@ module Extract
                 continue
             end
 
-            utr_site = utr.strand == "-" ? utr.start_pos : utr.end_pos
-
             # R2 end site, for Rn
             end_site = strand == "-" ? site["start"] : site["end"]
 
             push!(en_arr, end_site - utr_site)
-            # push!(real_en, end_site)
+            push!(real_en, end_site)
 
             # calcualte R1 start site  based on SE mode and strand
             start_site = NaN
             if single_end_mode
                 push!(st_arr, start_site)
             else
-                start_site = strand == "-" ? r1_pos["start"] : r1_pos["end"]
+                start_site = utr.strand == "+" ? r1_pos["start"] : r1_pos["end"]
+                # start_site = r1_pos["start"]
 
                 push!(st_arr, start_site - utr_site)
-                # push!(real_st, start_site)
+                push!(real_st, start_site)
             end
         end
 
         if length(st_arr) > min_reads
             push!(
                 res, 
-                ExtractedData(utr, st_arr, en_arr) # , real_st, real_en
+                ExtractedData(utr, st_arr, en_arr, real_st, real_en) # 
             )
         end
         close(reader)
 
         return res
+    end
+
+    function read_from_bam_cage(path::String,  utr::BEDRecord; min_reads::Int=0)
+        bai = string(path, ".bai")
+        reader = open(BAM.Reader, path, index=bai)
+        sites = Dict{}
+        res = Vector()
+
+        st_arr, en_arr = Vector(), Vector()
+        real_st, real_en = Vector(), Vector()
+        utr_site = utr.strand == "-" ? utr.start_pos : utr.end_pos
+        for record in eachoverlap(reader, utr.chrom, utr.start_pos:utr.end_pos)
+            if !filter(record)
+                continue
+            end
+
+            # Only kept R1
+            if BAM.flag(record) & SAM.FLAG_READ2 > 0
+                continue
+            end
+
+            if utr.start_pos > BAM.leftposition(record) || utr.end_pos < BAM.rightposition(record)
+                continue
+            end
+
+            # read strand
+            strand = determine_strand(record)
+
+            if strand != utr.strand
+                continue
+            end
+
+            start_site = utr.strand == "+" ? BAM.leftposition(record) : BAM.rightposition(record)
+            push!(st_arr, start_site - utr_site)
+            push!(real_st, start_site)
+        end
+
+        if length(st_arr) > min_reads
+            push!(
+                res, 
+                ExtractedData(utr, st_arr, en_arr, real_st, real_en) # 
+            )
+        end
+        close(reader)
+        return res
+    end
+
+
+    function get_record_from_bam(
+        path::String, 
+        utr::BEDRecord;
+        single_end_mode::Bool = false,
+        min_reads::Int=0,
+        cage_mode::Bool = false
+    )::Vector{ExtractedData}
+
+        if cage_mode
+            return read_from_bam_cage(path, utr, min_reads=min_reads)
+        end
+        return read_from_bam(path, utr, single_end_mode=single_end_mode, min_reads=min_reads)
+        
     end
 
     function run(
@@ -273,11 +323,10 @@ module Extract
 
         #single end mode
         single_end_mode::Bool = false,
-        verbose::Bool = false,
+        cage_mode::Bool = false,
         using_R::Bool = false,
         error_log=nothing,
         debug::Bool = false,
-        density=nothing
     )::Vector
         res = Vector()
 
@@ -293,6 +342,7 @@ module Extract
             sigma_f = sigma_f, max_beta=max_beta,
             fixed_inference_flag = fixed_inference_flag, 
             single_end_mode = single_end_mode, 
+            cage_mode=cage_mode,
             error_log=error_log,
             seed=seed, using_R = using_R
         )

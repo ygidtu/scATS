@@ -22,19 +22,12 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
                   
                   #single end mode
                   single_end_mode = FALSE, 
-                  seed = 42,
-
-                  cage_mode = FALSE
                   ){
-
+  
   cal_z_k = function(alpha_arr, beta_arr, ws, k, log_zmat){
     K = length(ws) - 1  # last component is uniform component
     if(k<=K){
-      if (cage_mode) {
-        log_zmat[,k] = log(ws[k]) + lik_l_ab(st_arr, alpha_arr[k], beta_arr[k], log=T)
-      } else {
-        log_zmat[,k] = log(ws[k]) + lik_lr_ab(st_arr, en_arr, alpha_arr[k], beta_arr[k], log=T)
-      }
+      log_zmat[,k] = log(ws[k]) + lik_l_ab(st_arr, alpha_arr[k], beta_arr[k], log=T)
     }else{
       log_zmat[,K+1] = log(ws[K+1]) + unif_log_lik
     }
@@ -278,7 +271,7 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
     }
     
     bic = cal_bic(log_zmat, Z)
-
+    
     lb_arr = lb_arr[!is.na(lb_arr)]
 
     sorted_inds = order(alpha_arr)
@@ -391,7 +384,7 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
         para_mat = init_para(n_ats)
         
         em_algo(ws, para_mat)
-      # res_list[[i]] = em_algo(ws, para_mat)
+      # res_list[[i]] = em_algo(ws, para_mat, debug=debug)
       },error=function(e){
         list(ws=NULL,alpha_arr=NULL,beta_arr=NULL,lb_arr=-Inf,bic=Inf)
       })
@@ -420,42 +413,23 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
     }else{
       alpha_arr = res$alpha_arr[-rm_inds]
       beta_arr = res$beta_arr[-rm_inds]
-      
+       
       res = fixed_inference(alpha_arr,beta_arr)
       return(res)
     }
   }
-  set.seed(seed)
-  if ( typeof(st_arr) == "list" ) {
-    st_arr = unlist(st_arr)
-  }
 
-  if ( typeof(en_arr) == "list" ) {
-    en_arr = unlist(en_arr)
-  }
-  # st_arr = abs(st_arr)
-  # en_arr = abs(en_arr)
-  # print(en_arr)
   n_frag = length(st_arr)
-  
-  if (!cage_mode) {
-    stopifnot(n_frag==length(en_arr))
-  }
-  
+  stopifnot(n_frag==length(en_arr))
   nround=50
-  
-  if(!cage_mode && abs(mean(abs(st_arr-en_arr)+1)-mu_f)>100){
-    warning(
-      paste0('mean of fragment size is ',round(mean(st_arr-en_arr)),
-             ', which deviates from mu_f=',mu_f, ' by more than 100bp.')
-    )
-  }
   
   step_size=5
   if(max_beta<step_size){
+    cat("max_beta=",max_beta," step_size=",step_size, "\n")
     stop('max_beta has to be greater than step_size.\n')
   }
   predef_beta_arr = seq(step_size,max_beta,step_size)
+
   lb_arr = rep(-Inf,n_max_ats)
   bic_arr = rep(Inf,n_max_ats)
   res_list = vector("list",n_max_ats)
@@ -467,17 +441,17 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
     unif_log_lik = lik_f0(log = T)
   }
   
-  # print("em_optiom0")
   for(i in seq(n_max_ats,n_min_ats)){
     res_list[[i]] = em_optim0(i)
     lb_arr[i] = tail(res_list[[i]]$lb_arr,1)
     bic_arr[i] = res_list[[i]]$bic
   }
-  # print(res_list)
+
   min_ind = which.min(bic_arr)
   res = res_list[[min_ind]]
-  # print(paste0("current res: ", res))
+  
   if(is.null(res$ws)){
+    cat('\n Inference failed. No results available. \n')
     return(res)
   }
     
@@ -496,79 +470,174 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
     label = apply(log_zmat, 1, which.max)
     res$label = label
   }
-  # print(res)
+  
   if(single_end_mode){
     res$beta_arr = res$beta_arr + sigma_f 
   }
   
-  # if(!is.null(debug_pdf)) {
-  #   tryCatch({
-  #     suppressMessages(library(ggplot2))
-
-  #     est_density = function(alpha_arr, beta_arr, ws, L, x_arr){
-  #       K = length(alpha_arr)
-  #       y_arr = rep(0,length(x_arr))
-  #       for(k in seq(K)){
-  #         y_arr = y_arr + ws[k]*dnorm(x_arr, alpha_arr[k], beta_arr[k])
-  #       }
-  #       y_arr = y_arr + 1/L
-  #       return(y_arr)
-  #     }
-
-  #     min_val = min(min(st_arr), min(en_arr))
-  #     max_val = max(max(st_arr), max(en_arr))
-  #     len_arr = st_arr-en_arr+1
-  #     x_arr = seq(-max_val-100,0)
-  #     y_arr = est_density(-res$alpha_arr, res$beta_arr, res$ws, L, x_arr)
-
-  #     sec_scale = max(y_arr) / max(c(density(-st_arr)$y, density(-en_arr)$y))
-
-  #     p <- ggplot() +
-  #         geom_density(
-  #             aes(x = x, color = s), 
-  #             data = data.frame(x=c(-st_arr, -en_arr), s=rep(c("st", "en"), each = length(st_arr)))
-  #         ) +
-  #         geom_line(
-  #             aes(x = x, y = y, color = s), 
-  #             data = data.frame(x = x_arr, y = y_arr / sec_scale, s = rep("est", length(x_arr)))
-  #         ) +
-  #         scale_color_manual(values=c("st"="#00AFBB", "en"="#E7B800", "est"="#FC4E07")) +
-  #         scale_y_continuous("Density", sec.axis = sec_axis(~ ./sec_scale, name = "Est density")) +
-  #         theme_bw() +
-  #         labs(
-  #             x="bp", color = "", 
-  #             subtitle = paste0( 
-  #                 'ws=',paste(round(res$ws,digits = 2),collapse=" "), 
-  #                 '; mu_len=',round(mean(len_arr)), 
-  #                 '; std_len=', round(sd(len_arr))
-  #             ),
-  #             title = strsplit(basename(debug_pdf), ".pdf")[[1]][1]
-  #         ) +
-  #         theme(legend.position = "top")
-
-  #     ggsave(filename = debug_pdf, plot = p, width = 4, height = 4)
-  #   }, error = function(e) {
-  #     print(e)
-  #   })
-  # }
-  # res$st_arr = st_arr
-  # res$en_arr = en_arr
-  # saveRDS(res, "test_R/test.rds")
+  # check fragment size
+  res$fragment_size_flag = 'normal'
+  if(abs(mean(st_arr-en_arr+1)-mu_f)>2*sigma_f){
+    warning(
+      paste0('mean of fragment size is ',round(mean(st_arr-en_arr)),
+             ', which deviates from mu_f=',mu_f, ' by more than 2*max_beta=', 2*sigma_f ,'bp.\n')
+    )
+    if(mean(st_arr-en_arr+1)-mu_f>0){
+      res$fragment_size_flag = 'short'
+      warning('fragment size shorter than expected.\n')
+    }else{
+      res$fragment_size_flag = 'long'
+      warning('fragment size longer than expected. Potential exon skipping. \n')
+    }
+  }
+  
   return(res)
 }
 
+est_density = function(alpha_arr, beta_arr, ws, L, x_arr){
+  K = length(alpha_arr)
+  y_arr = rep(0,length(x_arr))
+  for(k in seq(K)){
+    y_arr = y_arr + ws[k]*dnorm(x_arr, alpha_arr[k], beta_arr[k])
+  }
+  y_arr = y_arr + 1/L
+  return(y_arr)
+}
+
+###### main simulation code ######
+# mu_f = 350
+# sigma_f = 30
+# L = 1500
+# 
+# n_frag = 1000
+# f_len_arr = round(rnorm(n_frag, mean=mu_f,sd = sigma_f ))
+# 
+# alpha_arr = sort(c(500, 800, 1000))
+# n_ats = length(alpha_arr)
+# beta_arr = sample(c(10,20,30), n_ats, replace = T)
+# 
+# unif_ws = 0.05
+# ws = 1+runif(n_ats)
+# ws = ws/sum(ws)
+# ws = (1-unif_ws)*ws
+#   
+# boarder = round(n_frag*cumsum(ws))
+# seg_st = c(1,boarder)
+# seg_en = c(boarder-1,n_frag)
+# 
+# label_arr = rep(0,n_frag)
+# st_arr = rep(0,n_frag)
+# en_arr = rep(0,n_frag)
+# for(i in seq(n_ats+1)){
+#   
+#   tmpinds = seg_st[i]:seg_en[i] 
+#   tmpn = length(tmpinds)
+#   
+#   label_arr[tmpinds]=i
+#   
+#   if(i<=n_ats){ # ATS component
+#     st_arr[tmpinds] = round(rnorm(tmpn, alpha_arr[i], beta_arr[i]))
+#     en_arr[tmpinds] = st_arr[tmpinds] - f_len_arr[tmpinds]
+#   }else{ # uniform component
+#     st_arr[tmpinds] = sample(seq(L),tmpn,replace = T)
+#     en_arr[tmpinds] = sample(seq(L),tmpn,replace = T)
+#   }
+# }
+# 
+# 
+# # pair end
+# res = atsmix(n_max_ats = 5, n_min_ats=1, st_arr = st_arr , en_arr=en_arr, L = L,
+#              mu_f=350, # fragment length mean
+#              sigma_f=30, # fragment length standard deviation
+# 
+#              # pa site information
+#              min_ws = 0.01, # minimum weight of ATS site
+# 
+#              # inference with fixed parameters
+#              fixed_inference_flag = FALSE,
+# 
+#              #single end mode
+#              single_end_mode = FALSE,
+#              debug=F)
+
+# # single end
+# res = atsmix(n_max_ats = 5, n_min_ats=1, st_arr = rep(NA,n_frag) , en_arr=en_arr, L = L,
+#              mu_f=350, # fragment length mean
+#              sigma_f=30, # fragment length standard deviation
+#              
+#              # pa site information
+#              min_ws = 0.01, # minimum weight of ATS site
+#              
+#              # inference with fixed parameters
+#              fixed_inference_flag = FALSE,
+#              
+#              #single end mode
+#              single_end_mode = T, 
+#              debug=F)
+# 
+# 
+# cat('\n********************* Ground Truth **********************\n',sep='')
+# cat("real ws: ",ws,"\n")
+# cat("real alpha: ",alpha_arr,"\n")
+# cat("real beta: ",beta_arr,"\n")
+# 
+# 
+# plot(density(st_arr,bw='SJ'),col='red')
+# lines(density(en_arr),col='blue')
+# abline(v=res$alpha_arr,col='green')
+# legend('topleft',legend=c('l','r','est_l'),lty=c(1,1,1),col=c('red','blue','green'))
+
+
+
+# test_xu <- read.delim("~/Downloads/test_xu.txt")
+# len_list = vector('list',length=nrow(test_xu))
+# for(i in seq(nrow(test_xu))){
+#   st_arr = as.numeric(strsplit(test_xu[i,'st_arr'],',')[[1]])
+#   en_arr = as.numeric(strsplit(test_xu[i,'en_arr'],',')[[1]])
+#   len_list[[i]] = st_arr-en_arr
+# }
+# len_arr = unlist(len_list)
+# plot(density(len_arr),title('fragment size distribution'),xlim=c(0,500))
+
+
+# for(i in c(6)){
+#   st_arr = as.numeric(strsplit(test_xu[i,'st_arr'],',')[[1]])
+#   en_arr = as.numeric(strsplit(test_xu[i,'en_arr'],',')[[1]])
+#   L = max(st_arr+100)
+  
+  # res = atsmix(n_max_ats = 3, n_min_ats=2, st_arr = st_arr , en_arr=en_arr, L = L,
+  #              mu_f=350, # fragment length mean
+  #              sigma_f=30, # fragment length standard deviation
+  #              
+  #              # pa site information
+  #              min_ws = 0.01, # minimum weight of ATS site
+  #              
+  #              # inference with fixed parameters
+  #              fixed_inference_flag = FALSE,
+  #              
+  #              #single end mode
+  #              single_end_mode = FALSE,
+  #              debug=F)
+  # 
+  # 
+  # 
+  # plot(density(st_arr,bw='SJ'),col='red')
+  # lines(density(en_arr),col='blue')
+  # abline(v=res$alpha_arr,col='green')
+  # legend('topleft',legend=c('l','r','est_l'),lty=c(1,1,1),col=c('red','blue','green'))
+# }
 
 # set.seed(5)
-# data = readRDS('1_975899-977241-.rds')
+# # data = readRDS('1_975899-977241-.rds')
 # data = readRDS('1_1212795-1214738-.rds')
-# data = readRDS('1_1307169-1308618-.rds')
+# # data = readRDS('1_1307169-1308618-.rds')
 
 
 # st_arr = abs(data$st_arr)
 # en_arr = abs(data$en_arr)
 # len_arr = st_arr-en_arr+1
-# plot(density(len_arr),title('fragment size distribution'))
-# plot(density(len_arr),title('fragment size distribution'),xlim=c(0,500))
+# # plot(density(len_arr),title('fragment size distribution'))
+# # plot(density(len_arr),title('fragment size distribution'),xlim=c(0,500))
 
 
 # L = max(max(st_arr)+100, 2000)
@@ -589,3 +658,30 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
 #              #single end mode
 #              single_end_mode = FALSE,
 #              debug=F)
+
+
+# min_val = min(min(st_arr), min(en_arr))
+# max_val = max(max(st_arr), max(en_arr))
+# plot(density(-st_arr),col='red',xlim=c(-max_val-100,0))
+# lines(density(-en_arr),col='blue')
+# # plot(density(-st_arr,bw='SJ'),col='red',xlim=c(-max_val-100,0))
+# # lines(density(-en_arr,bw='SJ'),col='blue')
+# x_arr = seq(-max_val-100,0)
+# y_arr = est_density(-res$alpha_arr, res$beta_arr, res$ws, L, x_arr)
+# lines(x_arr, y_arr, col='green')
+# abline(v=-res$alpha_arr,col='green',lty=3)
+# legend('topright',legend=c('l','r','est_l'),lty=c(1,1,1),col=c('red','blue','green'))
+
+# # title( sub = paste0( 'ws=',paste(round(res$ws,digits = 2),collapse=" "),
+# #                      ' mu_len=',round(mean(len_arr)), ' std_len=', round(sd(len_arr)))  )
+
+# disp_ws = round(res$ws,digits = 2)
+# K = length(disp_ws)-1
+# disp_ws = c(disp_ws[K:1], disp_ws[K+1])
+# title( sub = paste0( 'ws=',paste(disp_ws,collapse=" "),
+#                      ' mu_len=',round(mean(len_arr)), ' std_len=', round(sd(len_arr)))  )
+
+
+
+
+

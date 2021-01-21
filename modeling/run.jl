@@ -22,10 +22,6 @@ function parse_commandline()
             help = "Prefix of output file"
             arg_type = String
             required = true
-        "--distance", "-d"
-            help = "The minimum distance of read in utr."
-            arg_type = Int
-            default = 1500
         "--using-R"
             help="whether to use R ksmooth"
             action = :store_true
@@ -64,15 +60,21 @@ function parse_commandline()
         "--seed"
             help = "seed"
             arg_type = Int64
-            default = 42
+            default = 5
         "--single-end"
             help="whether this is sinle-end sequencing"
             action = :store_true
         "--fixed-inference"
             help="inference with fixed parameters"
             action = :store_true
+        "--cage-mode"
+            help="whether to run in cage mode to identify ATS, only work with PE data"
+            action = :store_true
         "--verbose"
-            help="whether to display additional message"
+            help="whether to dispaly more detailed information"
+            action = :store_true
+        "--debug"
+            help="whether to run in debug mode"
             action = :store_true
     end
 
@@ -98,14 +100,20 @@ end
 
 
 function main(
-    input_file::String, bam::String, output::String, distance::Int;
+    input_file::String, bam::String, output::String;
     mu_f::Int64=300, min_ws::Float64=0.01,
     max_beta::Float64=50.0, sigma_f::Int64=50,
     using_R::Bool=true, verbose::Bool=false,
     process::Int=1, n_max_ats::Int=5, n_min_ats::Int=1,
     fixed_inference::Bool=false, single_end::Bool=false,
-    min_reads::Int=0
+    min_reads::Int=0, cage_mode::Bool = false,
+    debug::Bool = false
 )
+
+    if debug
+        return test()
+    end
+
     logger = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
     if verbose
         logger = Memento.config!("debug"; fmt="[{date} - {level} | {name}]: {msg} | {stacktrace}")
@@ -114,7 +122,7 @@ function main(
     out_dir = parent(output)
     try
         if !exists(out_dir)
-            mkdir(out_dir, recursive=true)
+            mkdir(Path(out_dir), recursive=true)
         end
     catch e
         error(logger, Formatting.format(FormatExpr("Error while create {}: {}"), output, e))
@@ -137,7 +145,7 @@ function main(
 
         push!(beds, temp_bed)
 
-        # if length(beds) > 500
+        # if length(beds) > 200
         #     break
         # end
 
@@ -160,19 +168,22 @@ function main(
     end
 
     res = @showprogress "Computing... " pmap(beds) do b
+    # res = Vector()
+    # for b = beds
         temp = Extract.get_record_from_bam(
             bam, b, 
-            distance=distance, 
-            min_reads=min_reads
+            min_reads=min_reads, 
+            cage_mode=cage_mode, 
+            single_end_mode=single_end
         )
-        # print(length(temp))
+
         temp_res = Vector()
         for data = temp
             for r = Extract.run(
                 data; n_max_ats = n_max_ats, n_min_ats = n_min_ats,
                 mu_f = mu_f, sigma_f = sigma_f, min_ws = min_ws, 
                 max_beta = max_beta, fixed_inference_flag = fixed_inference,
-                single_end_mode = single_end,
+                single_end_mode = single_end, cage_mode=cage_mode,
                 using_R = using_R, error_log = error_log
             )
                 push!(temp_res, r)
@@ -180,6 +191,7 @@ function main(
         end
         # println(temp_res)
         return temp_res
+        # push!(res, temp_res)
     end
 
     info(logger, "writing results")
@@ -197,25 +209,14 @@ function main(
 end
 
 
-main(
-    args["input"], args["bam"], args["output"], 
-    args["distance"], mu_f = args["mu-f"], 
-    min_ws = args["min-ws"], sigma_f = args["sigma-f"],
-    max_beta=args["max-beta"], using_R=args["using-R"], 
-    verbose=args["verbose"], process=args["process"], 
-    n_max_ats=args["n-max-ats"], n_min_ats=args["n-min-ats"],
-    fixed_inference=args["fixed-inference"], 
-    single_end=args["single-end"], min_reads=args["min-reads"]
-)
 
-
-function test(mu_f::Int64=350, min_ws::Float64=0.01,
+function test(mu_f::Int64=300, min_ws::Float64=0.01,
     max_beta::Float64=50.0, sigma_f::Int64=70,
-    using_R::Bool=false, verbose::Bool=false,
-    n_max_ats::Int=5, n_min_ats::Int=2, distance::Int=1500,
+    using_R::Bool=true, cage_mode=true,
+    n_max_ats::Int=5, n_min_ats::Int=2,
     fixed_inference::Bool=false, single_end::Bool=false,
     min_reads::Int=0)
-
+    println("run test func")
     bam = "/mnt/raid64/ATS/Personal/zhangyiming/bams/NHC2.bam"
 
     bed = Extract.new_bed("1\t1212595\t1214738\t.\t.\t-")
@@ -236,15 +237,12 @@ function test(mu_f::Int64=350, min_ws::Float64=0.01,
         close(r)
     end
 
-    temp = Extract.get_record_from_bam(
-        bam, bed, 
-        distance=distance, 
-        min_reads=min_reads
-    )
+    temp = Extract.get_record_from_bam( bam, bed, min_reads=min_reads, cage_mode=cage_mode)
     # println(temp)
     res = Vector()
     # pmap(1:20) do seed
-    for seed = 1:1
+    for seed = 4:4
+
         # seed = 4
         res = Extract.run(
             temp[1]; n_max_ats = n_max_ats, n_min_ats = n_min_ats,
@@ -252,6 +250,7 @@ function test(mu_f::Int64=350, min_ws::Float64=0.01,
             max_beta = max_beta, fixed_inference_flag = fixed_inference,
             single_end_mode = single_end, debug = true,
             using_R = using_R, error_log = nothing, seed=seed,
+            cage_mode=cage_mode
         )
         # println(string("temp res: ", res))
         # if length(res) > 0 && !isnothing(res[1].alpha_arr) && length(res[1].alpha_arr)  > 0
@@ -264,26 +263,38 @@ function test(mu_f::Int64=350, min_ws::Float64=0.01,
     
             ref = "/mnt/raid64/Covid19_Gravida/cellranger/Homo_sapiens/genes/genes.sorted.gtf.gz"
         
-            o = string("/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test1_", seed, ".pdf")
-            o2 = "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test2.pdf"
-            o3 = "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test3.pdf"
+            o = string("/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_jl/test1_", seed, ".pdf")
+            o2 = "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_jl/test2.pdf"
+            o3 = "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_jl/test3.pdf"
         
             lines = [1212595, [1212595 + round(Int, i) for i = r.alpha_arr]...]
             lines = join(map(string, lines), ",")
     
             # println(lines)
     
-            # dots = join(map(string, temp[1].real_st), ",")
+            dots = join(map(string, temp[1].real_st), ",")
             # dots2 =  join(map(string, temp[1].real_en), ",")
 
-            # focus = join(focus, ",")
+            focus = join(focus, ",")
             # print(dots)
-            run(`sashimiplot junc --gtf $ref --bam $bam --sj 1000 --junc 1:1210795:1214738 --ie 1,1  --ps RF --ssm R1 --fileout $o --trackline $lines --focus $focus --dots $dots`)  # 1212795-1214738
+            run(`sashimiplot junc --gtf $ref --bam $bam --sj 1000 --junc 1:1210795:1214738 --ie 1,1  --ps RF --ssm R1 --fileout $o2 --trackline $lines --focus $focus --dots $dots`)  # 1212795-1214738
         end
     end
     #res = res[1]
     # println(string("res: ", res))
 end
 
-# test()
+
+
+main(
+    args["input"], args["bam"], args["output"], 
+    mu_f = args["mu-f"], min_ws = args["min-ws"], 
+    sigma_f = args["sigma-f"], max_beta=args["max-beta"], 
+    using_R=args["using-R"], cage_mode=args["cage-mode"],
+    verbose=args["verbose"], process=args["process"], 
+    n_max_ats=args["n-max-ats"], n_min_ats=args["n-min-ats"],
+    fixed_inference=args["fixed-inference"], 
+    single_end=args["single-end"], min_reads=args["min-reads"],
+    debug=get(args, "debug", false)
+)
 

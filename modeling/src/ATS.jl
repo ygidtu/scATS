@@ -14,7 +14,7 @@ module ATSMIX
     using Compat: @__MODULE__  # requires a minimum of Compat 0.26. Not required on Julia 0.7
 
     # Create our module level LOGGER (this will get precompiled)
-    const LOGGER = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg} | {stacktrace}")
+    const LOGGER = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
 
     # const LOGGER = getlogger(@__MODULE__)
 
@@ -51,37 +51,39 @@ module ATSMIX
         n_min_ats::Int = 1
         min_ws::Number = 0.01
         max_unif_ws::Number = 0.1
+        cage_mode::Bool = false
     end
 
-    # function toBSON(params::Param, path::String)
-    #     res = Dict(fn=>getfield(params, fn) for fn ∈ fieldnames(typeof(params)))
-    #     bson(path, res)
-    # end
+    #=
+    function toBSON(params::Param, path::String)
+        res = Dict(fn=>getfield(params, fn) for fn ∈ fieldnames(typeof(params)))
+        bson(path, res)
+    end
 
-    # function fromBSON(path::String)::Param
-    #     res = BSON.load(path)
-
-    #     return Param(
-    #         res[:st_arr],
-    #         res[:en_arr],
-    #         res[:mu_f],
-    #         res[:sigma_f],
-    #         res[:unif_log_lik],
-    #         res[:L],
-    #         res[:max_beta],
-    #         res[:seed],
-    #         res[:n_win],
-    #         res[:mode_arr],
-    #         res[:step_size],
-    #         res[:fixed_inference_flag],
-    #         res[:predef_beta_arr],
-    #         res[:single_end_mode],
-    #         res[:n_max_ats],
-    #         res[:n_min_ats],
-    #         res[:min_ws],
-    #         res[:max_unif_ws],
-    #     )
-    # end
+    function fromBSON(path::String)::Param
+        res = BSON.load(path)
+        return Param(
+            res[:st_arr],
+            res[:en_arr],
+            res[:mu_f],
+            res[:sigma_f],
+            res[:unif_log_lik],
+            res[:L],
+            res[:max_beta],
+            res[:seed],
+            res[:n_win],
+            res[:mode_arr],
+            res[:step_size],
+            res[:fixed_inference_flag],
+            res[:predef_beta_arr],
+            res[:single_end_mode],
+            res[:n_max_ats],
+            res[:n_min_ats],
+            res[:min_ws],
+            res[:max_unif_ws],
+        )
+    end
+    =#
 
     mutable struct EMData
         ws::Union{AbstractArray, Nothing}
@@ -136,10 +138,17 @@ module ATSMIX
         K = length(ws) - 1
         
         if 0 < k <= K
-            log_zmat[:, k] = log(ws[k]) .+ lik_lr_ab(
-                params.st_arr, params.en_arr, alpha_arr[k], beta_arr[k]; 
-                params=params, do_log = true
-            )
+            if params.cage_mode
+                log_zmat[:, k] = log(ws[k]) .+ lik_l_ab(
+                    params.st_arr, alpha_arr[k], beta_arr[k]; 
+                    do_log = true
+                )
+            else
+                log_zmat[:, k] = log(ws[k]) .+ lik_lr_ab(
+                    params.st_arr, params.en_arr, alpha_arr[k], beta_arr[k]; 
+                    params=params, do_log = true
+                )
+            end
         else
             log_zmat[:, K + 1] .= log(ws[K + 1]) + params.unif_log_lik
         end
@@ -265,14 +274,14 @@ module ATSMIX
         else
             nn = ceil(Int, n / K)
             res = zeros(nn * K)
-            res[1:K] = sample(MersenneTwister(seed), 1:K, K, replace = false)
+            res[1:K] = StatsBase.sample(MersenneTwister(seed), 1:K, K, replace = false)
 
             for i = 2:nn
                 st = (i - 1) * K
-                res[(st + 1):(st + K)] = sample(MersenneTwister(seed), 1:K, K, replace = false)
+                res[(st + 1):(st + K)] = StatsBase.sample(MersenneTwister(seed), 1:K, K, replace = false)
 
                 if res[st] == res[st + 1]
-                    tmpind = sample(MersenneTwister(seed), 2:K, 1, replace = false)[1]
+                    tmpind = StatsBase.sample(MersenneTwister(seed), 2:K, 1, replace = false)[1]
                     tmp = res[st + tmpind]
                     res[st .+ tmpind] = res[st .+ 1]
                     res[st .+ 1] = tmp
@@ -287,18 +296,6 @@ module ATSMIX
         N, K = size(Z)
         K = K - 1
         return -2 * exp_log_lik(log_zmat, Z) + (3 * K + 1) * log(N)
-    end
-
-    # replace query with closest values in ref_arr
-    function replace_with_closest(ref_arr::Vector, query_arr::Vector)::Vector
-        n = length(query_arr)
-        res = zeros(n)
-
-        for i = 1:n
-            tmpind = findmin(abs.(ref_arr .- query_arr[i]))
-            res[i] = ref_arr[tmpind]
-        end
-        return res 
     end
 
     # perform inference given alpha_arr and beta_arr
@@ -468,37 +465,43 @@ module ATSMIX
         end
 
         # first sign is always 1
-        if sign_arr[1] == 1
+        if sign_arr[1] != 1
             throw(string("sign_arr[1] === 1"))
         end
 
         temp_lens, temp_vals = rle(sign_arr)
         st_arr, en_arr = get_border(temp_lens)
 
-        zero_inds = findall(x -> x == 0, tmp_vals)
+        zero_inds = findall(x -> x == 0, temp_vals)
 
         for i = zero_inds
             st = st_arr[i]
             en = en_arr[i]
 
-            if i == length(tmp_vals) || en - st <= 1
-                sign_arr[st:en] = tmp_vals[i - 1]
+            if i == length(temp_vals) || en - st <= 1
+                sign_arr[st:en] .= temp_vals[i - 1]
             else
                 mid = round(Int, (st + en) / 2)
-                sign_arr[st:mid] = tmp_vals[i - 1]
-                sign_arr[(mid + 1):en] = tmp_vals[i + 1]
+                sign_arr[st:mid] .= temp_vals[i - 1]
+                sign_arr[(mid + 1):en] .= temp_vals[i + 1]
             end
         end
 
         return sign_arr
     end
 
-    function split_data(l_arr::Vector, step_size::Number)::SplitData
+    function split_data(l_arr::Vector, step_size::Number; npoints::Int = 1024)::SplitData
         # step_size defined in outer function
+        # set boudary of kernel density, to keep the last st_arr .<= en_arr
+        boundary = (max(1, minimum(l_arr) - 10) + 1, maximum(l_arr) - 1)
+        if boundary[2] - boundary[1] < 1024
+            npoints = round(Int, float(boundary[2] - boundary[1])) - 1
+        end
+
         ks_res = kde(
             l_arr, bandwidth=5 * step_size, 
-            npoints=1024, kernel = Normal,
-            boundary=[minimum(l_arr), maximum(l_arr)]
+            npoints=npoints, kernel = Normal,
+            boundary=boundary
         )
         
         # change points
@@ -511,9 +514,6 @@ module ATSMIX
         mode_arr = collect(ks_res.x)[ chng[collect(1:2:length(chng))] ]
         n_mode = length(mode_arr)
         boarder_arr = collect(ks_res.x)[ chng[collect(2:2:length(chng))] ][1:(n_mode-1)]
-
-        # bk = boarder_arr[length(boarder_arr)] / argmax(l_arr)
-        # boarder_arr = boarder_arr ./ bk
 
         st_arr = [max(1, minimum(l_arr) - 10), boarder_arr .+ 1...]
         en_arr = [boarder_arr..., maximum(l_arr) + 10]
@@ -532,11 +532,11 @@ module ATSMIX
         tmp_res = split_data(st_arr, params.step_size)
 
         if tmp_res.n_win >= n_ats
-            tmpinds = sample(MersenneTwister(params.seed), 1:tmp_res.n_win, n_ats, replace = false)
+            tmpinds = StatsBase.sample(MersenneTwister(params.seed), 1:tmp_res.n_win, n_ats, replace = false)
         else
             tmpinds = [
                 collect(1:tmp_res.n_win)..., 
-                sample(MersenneTwister(params.seed), 1:tmp_res.n_win, tmp_res.ws_arr, n_ats - tmp_res.n_win, replace=true)...
+                StatsBase.sample(MersenneTwister(params.seed), 1:tmp_res.n_win, Weights(tmp_res.ws_arr), n_ats - tmp_res.n_win, replace=true)...
             ]
         end
 
@@ -550,7 +550,7 @@ module ATSMIX
             tmpen = tmp_res.en_arr[ti]
 
             if tmpst > tmpen
-               throw("tmpst must < tmpen")
+                throw("tmpst must < tmpen")
             elseif tmpst == tmpen
                 res.alpha_arr[i] = tmpst
             else
@@ -566,7 +566,7 @@ module ATSMIX
         return res
     end
 
-    function em_optim0(n_ats::Int; params::Param, n_trial::Int=20)
+    function em_optim0(n_ats::Int64; params::Param, n_trial::Int=20)
 
         lb_arr = [-Inf for _ = 1:n_trial]
         bic_arr = [-Inf for _ = 1:n_trial]
@@ -644,7 +644,7 @@ module ATSMIX
         try
             n_frag = length(params.st_arr)
 
-            if n_frag != length(params.en_arr)
+            if !params.cage_mode && n_frag != length(params.en_arr)
                 throw("the length of st_arr != en_arr")
             end
     
@@ -655,7 +655,7 @@ module ATSMIX
             res = nothing
 
             for i = params.n_max_ats:-1:params.n_min_ats
-                temp = em_optim0(i; params=params)
+                temp = em_optim0(i, params=params)
     
                 if isnothing(res)
                     res = temp
@@ -706,7 +706,7 @@ module ATSMIX
                 close(w)
             end
 
-            warn(LOGGER, e)
+            debug(LOGGER, e)
         end
         return emptyData()
     end
@@ -729,6 +729,7 @@ module ATSMIX
         single_end_mode = params.single_end_mode
         max_unif_ws = params.max_unif_ws
         seed = params.seed
+        cage_mode = params.cage_mode
 
         try
             atsmix = R"""
@@ -745,8 +746,8 @@ module ATSMIX
                     fixed_inference_flag = $fixed_inference_flag,
                     single_end_mode = $single_end_mode,
                     max_unif_ws = $max_unif_ws,
-                    debug_pdf=$debug,
-                    seed = $seed
+                    seed = $seed,
+                    cage_mode = $cage_mode
             )
             """
 
@@ -801,8 +802,8 @@ module ATSMIX
                 ))
                 close(w)
             end
-            # println(e)
-            debug(LOGGER, e)
+            println(e)
+            debug(LOGGER, string(e))
             return emptyData()
         end
     end
@@ -845,12 +846,16 @@ module ATSMIX
         single_end_mode::Bool = false,
 
         using_R::Bool = true,
+
+        cage_mode::Bool = false,
         error_log = nothing,
     )
 
-        len_arr = abs.([y - x + 1 for (x, y) = zip(st_arr, en_arr)])
-        mu_f = mean(len_arr)
-        sigma_f = std(len_arr)
+        if !cage_mode && !single_end_mode
+            len_arr = abs.([y - x + 1 for (x, y) = zip(st_arr, en_arr)])
+            mu_f = mean(len_arr)
+            sigma_f = std(len_arr)
+        end
 
         unif_log_lik = 0
         if single_end_mode
@@ -878,38 +883,14 @@ module ATSMIX
             n_max_ats,
             n_min_ats,
             min_ws,
-            max_unif_ws
+            max_unif_ws,
+            cage_mode
         )
 
-        # toBSON(params, "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test.bson")
+        # toBSON(params, "test_R/test.bson")
         runner = using_R ? atsmix_by_R : atsmix
 
         return runner(params, error_log)
 
     end
 end
-
-
-function test()
-    params = ATSMIX.fromBSON("/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test.bson")
-    res = ATSMIX.atsmix(params, nothing, nothing)
-
-    seed = 1
-    r = res
-    bam = "/mnt/raid61/Personal_data/zhangyiming/code/afe/modeling/bam.tsv"
-
-    ref = "/mnt/raid64/Covid19_Gravida/cellranger/Homo_sapiens/genes/genes.sorted.gtf.gz"
-
-    o = string("/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test1_", seed, ".pdf")
-    o2 = "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test2.pdf"
-    o3 = "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test3.pdf"
-
-    lines = [1212795, [1212795 + round(Int, abs(i)) for i = r.alpha_arr]...]
-    lines = join(map(string, lines), ",")
-
-    run(`sashimiplot junc --gtf $ref --bam $bam --sj 1000 --junc 1:1210795:1214738 --ie 1,1  --ps RF --ssm R1 --fileout $o --trackline $lines --focus 1212795-1214738`)  # 1212795-1214738
-
-end
-
-
-# test()
