@@ -339,7 +339,7 @@ module Extract
         exon_coord = Dict{Int, Int}()
         for e = exons
             for i = e.Start:e.End
-                exon_coord[i] = i + length(exon_coord) + 1 - utr_site
+                exon_coord[i] = exons[1].Start + length(exon_coord) + 1 - utr_site
             end
         end
 

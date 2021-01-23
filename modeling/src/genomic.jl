@@ -98,7 +98,7 @@ module Genomic
         
         id, name, gene_id, transcript_id = "", "", "", ""
         if records[3] == "gene"
-            id, name = attributes[string(records[3], "_id")], attributes[string(records[3], "_name")]
+            id, name = attributes[string(records[3], "_id")], get(attributes, string(records[3], "_name"), "")
         elseif records[3] in ["transcript", "exon"]
             id, name, gene_id, transcript_id = attributes[string(records[3], "_id")], get(attributes, string(records[3], "_name"), ""), attributes["gene_id"], attributes["transcript_id"]
         end
