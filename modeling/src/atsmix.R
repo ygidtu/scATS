@@ -500,6 +500,23 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
   if(single_end_mode){
     res$beta_arr = res$beta_arr + sigma_f 
   }
+
+  res$fragment_size_flag = 'normal'
+  len_arr = -st_arr+en_arr+1
+  mu_len = mean(len_arr)
+  if(abs(mu_len-mu_f)>2*sigma_f){
+    warning(
+      paste0('mean of fragment size is ',round(mu_len),
+             ', which deviates from mu_f=',mu_f, ' by more than 2*sigma_f=', 2*sigma_f ,' bp.\n')
+    )
+    if(mu_len-mu_f<0){
+      res$fragment_size_flag = 'short'
+      warning('fragment size shorter than expected.\n')
+    }else{
+      res$fragment_size_flag = 'long'
+      warning('fragment size longer than expected. Potential exon skipping. \n')
+    }
+  }
   
   # if(!is.null(debug_pdf)) {
   #   tryCatch({
@@ -553,39 +570,6 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
   # }
   # res$st_arr = st_arr
   # res$en_arr = en_arr
-  # saveRDS(res, "test_R/test.rds")
+  # saveRDS(res, "/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test.rds")
   return(res)
 }
-
-
-# set.seed(5)
-# data = readRDS('1_975899-977241-.rds')
-# data = readRDS('1_1212795-1214738-.rds')
-# data = readRDS('1_1307169-1308618-.rds')
-
-
-# st_arr = abs(data$st_arr)
-# en_arr = abs(data$en_arr)
-# len_arr = st_arr-en_arr+1
-# plot(density(len_arr),title('fragment size distribution'))
-# plot(density(len_arr),title('fragment size distribution'),xlim=c(0,500))
-
-
-# L = max(max(st_arr)+100, 2000)
-
-# res = atsmix(n_max_ats = 3, n_min_ats=1, st_arr = st_arr , en_arr=en_arr, L = L,
-#              # mu_f=300, # fragment length mean
-#              mu_f = round(mean(len_arr)),
-#              sigma_f=50, # fragment length standard deviation
-
-#              # pa site information
-#              min_ws = 0.01, # minimum weight of ATS site
-#              max_unif_ws = 0.1,
-#              max_beta = 50,
-
-#              # inference with fixed parameters
-#              fixed_inference_flag = FALSE,
-
-#              #single end mode
-#              single_end_mode = FALSE,
-#              debug=F)

@@ -1,4 +1,5 @@
 module Extract
+    using BGZFStreams
     using BioAlignments
     using Compat: @__MODULE__  # requires a minimum of Compat 0.26. Not required on Julia 0.7
     using FilePathsBase
@@ -12,6 +13,7 @@ module Extract
     using XAM
 
     include(joinpath(@__DIR__, "ATS.jl"))
+    include(joinpath(@__DIR__, "genomic.jl"))
 
     # Create our module level LOGGER (this will get precompiled)
     const LOGGER = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
@@ -23,68 +25,20 @@ module Extract
         Memento.register(LOGGER)
     end
 
-    export  BEDRecord, new_bed, ExtractedData, get_record_from_bam, run, setLevel, get_bed_short
+    export  ExtractedData, get_bed_short, get_record_from_bam, get_record_from_bam_transcript, run, setLevel
 
     function setLevel(level::String)
         setlevel!(LOGGER, level)
         ATSMIX.setLevel(level)
     end
 
-    @with_kw struct BEDRecord
-        chrom::String
-        start_pos::Int64
-        end_pos::Int64
-        strand::String
-        score::String
-        name::String 
-    end
-
-    Base.show(io::IO, self::BEDRecord) = print(
-        io,
-        Formatting.format(
-            FormatExpr("{}:{}-{}:{}\t{}\t{}"),
-            self.chrom, self.start_pos, self.end_pos, self.strand,
-            self.name, self.score
-        )
-    )
-    
-    function new_bed(line::String)::BEDRecord  # ; chromosomes::Dict{String, String}=nothing
-        lines = split(strip(line), "\t")
-        
-        if length(lines) >= 6
-            return BEDRecord(
-                replace(lines[1], "chr"=>""), parse(Int64, lines[2]), parse(Int64, lines[3]),
-                lines[6], lines[4], strip(lines[5])
-            )
-        elseif length(lines) == 3
-            return BEDRecord(
-                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),
-                "", "", ""
-            )
-        elseif length(lines) == 4
-            return BEDRecord(
-                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),
-                strip(lines[4]), "", ""
-            )
-        else
-            error(LOGGER, string("the number of columns mismatch: ", lines))
-            exit(1)
-        end
-    end
-
-    function get_bed_short(bed::BEDRecord)::String
-        return Formatting.format(
-            FormatExpr("{}:{}-{}:{}"),
-            self.chrom, self.start_pos, self.end_pos, self.strand
-        )
-    end
-
     @with_kw struct ExtractedData
-        utr::BEDRecord
+        utr
         st_arr::Vector
         en_arr::Vector
-        real_st::Vector
-        real_en::Vector
+        real_st::Vector = []
+        real_en::Vector = []
+        exon_coord::Dict{Int, Int} = Dict()
     end
 
     Base.show(io::IO, self::ExtractedData) = print(
@@ -94,8 +48,6 @@ module Extract
             string(self.utr),
             join(map(string, self.st_arr), ","),
             join(map(string, self.en_arr), ","),
-            # join(map(string, self.real_st), ","),
-            # join(map(string, self.real_en), ",")
         )
     )
 
@@ -144,17 +96,16 @@ module Extract
     end
 
 
-    function read_from_bam(path::String,  utr::BEDRecord; single_end_mode::Bool = false, min_reads::Int=0)::Vector{ExtractedData}
+    function read_from_bam(path::String,  utr; single_end_mode::Bool = false, min_reads::Int=0)::Union{ExtractedData, Nothing}
         bai = string(path, ".bai")
         reader = open(BAM.Reader, path, index=bai)
         sites = Dict{}
-        res = Vector()
 
         st_arr, en_arr = Vector(), Vector()
         real_st, real_en = Vector(), Vector()
         r1, r2 = Dict(), Dict()
-        
-        for record in eachoverlap(reader, utr.chrom, utr.start_pos:utr.end_pos)
+
+        for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
             if !filter(record)
                 continue
             end
@@ -171,20 +122,19 @@ module Extract
             if BAM.flag(record) & SAM.FLAG_READ1 > 0
                 r1[BAM.tempname(record)] = Dict(
                     "start"=>BAM.leftposition(record), 
-                    "end"=>BAM.rightposition(record)
+                    "end"=>BAM.rightposition(record),
                 )
                 continue
             end
 
             # R2 needs locate in UTR
-            if utr.start_pos > BAM.leftposition(record) || utr.end_pos < BAM.rightposition(record)
+            if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
                 continue
             end
 
             # read strand
             strand = determine_strand(record)
-
-            if strand != utr.strand
+            if strand != utr.Strand
                 continue
             end
 
@@ -193,11 +143,10 @@ module Extract
                 "end"=>BAM.rightposition(record)
             )           
         end
+        close(reader)
 
-        # now filter and check r1
-        utr_site = utr.strand == "-" ? utr.start_pos : utr.end_pos
+        utr_site = utr.Strand == "+" ? utr.Start : utr.End
         for (name, site) = r2
-
             r1_pos = get(r1, name, nothing)
 
             if isnothing(r1_pos)
@@ -205,7 +154,7 @@ module Extract
             end
 
             # R1 needs locate in UTR
-            if !single_end_mode && (utr.start_pos > r1_pos["start"] || utr.end_pos < r1_pos["end"])
+            if !single_end_mode && (utr.Start > r1_pos["start"] || utr.End < r1_pos["end"])
                 continue
             end
 
@@ -220,153 +169,212 @@ module Extract
             if single_end_mode
                 push!(st_arr, start_site)
             else
-                start_site = utr.strand == "+" ? r1_pos["start"] : r1_pos["end"]
-                # start_site = r1_pos["start"]
-
+                start_site = utr.Strand == "+" ? r1_pos["start"] : r1_pos["end"]
+                
                 push!(st_arr, start_site - utr_site)
                 push!(real_st, start_site)
             end
         end
 
         if length(st_arr) > min_reads
-            push!(
-                res, 
-                ExtractedData(utr, st_arr, en_arr, real_st, real_en) # 
-            )
+            return ExtractedData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en)
         end
-        close(reader)
 
-        return res
+        return nothing
     end
 
-    function read_from_bam_cage(path::String,  utr::BEDRecord; min_reads::Int=0)
+    function read_from_bam_cage(path::String,  utr; min_reads::Int=0)::Union{ExtractedData, Nothing}
         bai = string(path, ".bai")
         reader = open(BAM.Reader, path, index=bai)
         sites = Dict{}
-        res = Vector()
 
         st_arr, en_arr = Vector(), Vector()
         real_st, real_en = Vector(), Vector()
-        utr_site = utr.strand == "-" ? utr.start_pos : utr.end_pos
-        for record in eachoverlap(reader, utr.chrom, utr.start_pos:utr.end_pos)
+        r1, r2 = Dict(), Dict()
+
+        utr_site = utr.Strand == "+" ? utr.Start : utr.End
+        for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
             if !filter(record)
                 continue
             end
 
             # Only kept R1
             if BAM.flag(record) & SAM.FLAG_READ2 > 0
+                r2[BAM.tempname(record)] = Dict(
+                    "start"=>BAM.leftposition(record), 
+                    "end"=>BAM.rightposition(record),
+                )
                 continue
             end
 
-            if utr.start_pos > BAM.leftposition(record) || utr.end_pos < BAM.rightposition(record)
+            if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
                 continue
             end
 
             # read strand
             strand = determine_strand(record)
 
-            if strand != utr.strand
+            if strand != utr.Strand
                 continue
             end
 
-            start_site = utr.strand == "+" ? BAM.leftposition(record) : BAM.rightposition(record)
+            r1[BAM.tempname(record)] = Dict(
+                "start"=>BAM.leftposition(record), 
+                "end"=>BAM.rightposition(record),
+            )
+        end
+        close(reader)
+
+        utr_site = utr.Strand == "+" ? utr.Start : utr.End
+        for (name, r1_pos) = r1
+            r2_pos = get(r2, name, nothing)
+
+            if isnothing(r2_pos)
+                continue
+            end
+
+            # R1 needs locate in UTR
+            if !single_end_mode && (utr.Start > r1_pos["start"] || utr.End < r1_pos["end"])
+                continue
+            end
+
+            # R2 end site, for Rn
+            end_site = strand == "-" ? r2_pos["start"] : r2_pos["end"]
+
+            push!(en_arr, end_site - utr_site)
+            push!(real_en, end_site)
+
+            # calcualte R1 start site  based on SE mode and strand
+            start_site = utr.Strand == "+" ? r1_pos["start"] : r1_pos["end"]
+
             push!(st_arr, start_site - utr_site)
             push!(real_st, start_site)
         end
 
         if length(st_arr) > min_reads
-            push!(
-                res, 
-                ExtractedData(utr, st_arr, en_arr, real_st, real_en) # 
-            )
+           return ExtractedData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en)
         end
-        close(reader)
-        return res
-    end
 
+        return nothing
+    end
 
     function get_record_from_bam(
         path::String, 
-        utr::BEDRecord;
+        utr;
         single_end_mode::Bool = false,
         min_reads::Int=0,
         cage_mode::Bool = false
-    )::Vector{ExtractedData}
+    )::Union{ExtractedData, Nothing}
 
         if cage_mode
             return read_from_bam_cage(path, utr, min_reads=min_reads)
         end
         return read_from_bam(path, utr, single_end_mode=single_end_mode, min_reads=min_reads)
-        
     end
 
-    function run(
-        data::ExtractedData;
-        # maximum number of ATS sites
-        n_max_ats::Int=5, 
-        # minimum number of ATS sites
-        n_min_ats::Int=1, 
-        # fragment size information
-        # fragment length mean
-        mu_f::Int = 350, 
-        # fragment length standard deviation
-        sigma_f::Int = 50, 
+    function get_record_from_bam_transcript(path::String, transcript, exons::Vector; min_reads::Int=0, expand::String="200,1000")::Union{ExtractedData, Nothing}
+        bai = string(path, ".bai")
+        reader = open(BAM.Reader, path, index=bai)
+        sites = Dict{}
 
-        # pa site information
-        # minimum weight of ATS site
-        min_ws::Float64 = 0.01, 
-        # maximum std for ATS site
-        max_beta::Float64 = 50.0,
-        seed::Int=2,
-        # inference with fixed parameters
-        fixed_inference_flag::Bool = false,
-
-        #single end mode
-        single_end_mode::Bool = false,
-        cage_mode::Bool = false,
-        using_R::Bool = false,
-        error_log=nothing,
-        debug::Bool = false,
-    )::Vector
-        res = Vector()
-
-        utr = data.utr
-        en_arr = data.en_arr
-        st_arr  = data.st_arr
-
-        temp_res = ATSMIX.fit(
-            n_max_ats, n_min_ats, 
-            st_arr , en_arr; 
-            L = abs(utr.end_pos - utr.start_pos), 
-            mu_f=mu_f, min_ws = min_ws, 
-            sigma_f = sigma_f, max_beta=max_beta,
-            fixed_inference_flag = fixed_inference_flag, 
-            single_end_mode = single_end_mode, 
-            cage_mode=cage_mode,
-            error_log=error_log,
-            seed=seed, using_R = using_R
-        )
-        if isnothing(temp_res.bic) || isinf(temp_res.bic)
-            return res
+        try
+            expand = parse.(Int, split(expand, ","))
+            if length(expand) < 2
+                throw(string("Only single expand value was passed: ", expand, "; 200,1000 format was required"))
+            end
+        catch e
+            throw(e)
         end
 
-        if debug
-            push!(res, temp_res)
-        else
-            push!(
-                res, 
-                Formatting.format(
-                    FormatExpr("{}:{}-{}:{}\t{}\t{}\t{}"), 
-                    data.utr.chrom, data.utr.start_pos, data.utr.end_pos, data.utr.strand,
-                    join(map(string, data.st_arr), ","),
-                    join(map(string, data.en_arr), ","),
-                    # join(map(string, data.real_st), ","),
-                    # join(map(string, data.real_en), ","),
-                    string(temp_res)
+        st_arr, en_arr = Vector(), Vector()
+        real_st, real_en = Vector(), Vector()
+        r1, r2 = Dict(), Dict()
+
+        utr = Genomic.BED(
+            transcript.Chrom,
+            transcript.Strand == "+" ? max(1, transcript.Start - expand[1]) : max(1, transcript.Start - expand[2]),
+            transcript.End == "+" ? transcript.End + expand[2] : transcript.End + expand[1],
+            transcript.Name, transcript.GeneID,
+            transcript.Strand
+        )
+    
+        utr_site = utr.Strand == "+" ? utr.Start : utr.End
+        for record in eachoverlap(reader, transcript.Chrom, utr.Start:utr.End)
+            if !filter(record)
+                continue
+            end
+
+            # Only kept R1
+            if BAM.flag(record) & SAM.FLAG_READ2 > 0
+                r2[BAM.tempname(record)] = Dict(
+                    "start"=>BAM.leftposition(record), 
+                    "end"=>BAM.rightposition(record),
                 )
+                continue
+            end
+
+            if transcript.Start > BAM.leftposition(record) || transcript.End < BAM.rightposition(record)
+                continue
+            end
+
+            # read strand
+            strand = determine_strand(record)
+
+            if strand != utr.Strand
+                continue
+            end
+
+            start_site = utr.Strand == "+" ? BAM.leftposition(record) : BAM.rightposition(record)
+
+            r1[BAM.tempname(record)] = Dict(
+                "start"=>BAM.leftposition(record), 
+                "end"=>BAM.rightposition(record),
             )
         end
+        close(reader)
 
-        return res
+        # sort!(exons)
+
+        # convert genomic site of exons to relative pos in transcript
+        exon_coord = Dict{Int, Int}()
+        for e = exons
+            for i = e.Start:e.End
+                exon_coord[i] = i + length(exon_coord) + 1 - utr_site
+            end
+        end
+
+        utr_site = utr.Strand == "+" ? utr.Start : utr.End
+        for (name, r1_pos) = r1
+            r2_pos = get(r2, name, nothing)
+
+            if isnothing(r2_pos)
+                continue
+            end
+
+            # R1 needs locate in UTR
+            if utr.Start > r1_pos["start"] || utr.End < r1_pos["end"]
+                continue
+            end
+
+            # R2 end site, for Rn
+            end_site = strand == "-" ? r2_pos["start"] : r2_pos["end"]
+            # calcualte R1 start site  based on SE mode and strand
+            start_site = utr.Strand == "+" ? r1_pos["start"] : r1_pos["end"]
+            
+
+            if haskey(exon_coord, start_site) && haskey(exon_coord, end_site)
+                push!(st_arr, exon_coord[start_site])
+                push!(real_st, start_site)
+
+                push!(en_arr, exon_coord[end_site])
+                push!(real_en, end_site)
+            end
+        end
+
+        if length(st_arr) > min_reads
+            return ExtractedData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en, exon_coord = exon_coord)
+        end
+        
+        return nothing
     end
 end

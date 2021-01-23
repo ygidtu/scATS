@@ -2,10 +2,11 @@ import Base.isless
 
 
 module Genomic
+    using BSON
     using Parameters
     using ProgressMeter
 
-    export GTF, Bed, create_GTF, load_GTF, isupstream, isdownstream, get_bed
+    export GTF, Bed, create_GTF, load_GTF, isupstream, isdownstream, get_bed, new_bed
 
     @with_kw struct GTF
         Chrom::String
@@ -20,11 +21,7 @@ module Genomic
         Attributes::Dict{String, String}
     end
 
-    Base.show(io::IO, g::GTF) = print(
-        io, 
-        g.Chrom, ":", g.Start, "-", g.End, ":", g.Strand,
-        "\t", g.Type, "\t", g.ID, "-", g.Name, "\t", g.GeneID, "\t", g.TranscriptID
-    )
+    Base.show(io::IO, g::GTF) = print(io,  g.Chrom, ":", g.Start, "-", g.End, ":", g.Strand, "\t", g.Type, "\t", g.ID, "-", g.Name, "\t", g.GeneID, "\t", g.TranscriptID)
 
     @with_kw struct BED
         Chrom::String
@@ -35,10 +32,7 @@ module Genomic
         Strand::String
     end
 
-    Base.show(io::IO, b::BED) = print(
-        io, 
-        join([b.Chrom, b.Start, b.End, b.Name, b.Score, b.Strand], "\t")
-    )
+    Base.show(io::IO, b::BED) = print(io, join([b.Chrom, b.Start, b.End, b.Name, b.Score, b.Strand], "\t"))
 
     function get_bed(bed::BED, expand::Int=100)::String
         return join([
@@ -48,6 +42,37 @@ module Genomic
             bed.Name, bed.Score, 
             bed.Strand
         ], "\t")
+    end
+
+    function new_bed(line::String)::BED  # ; chromosomes::Dict{String, String}=nothing
+        lines = split(strip(line), "\t")
+        
+        if length(lines) >= 6
+            return BED(
+                replace(lines[1], "chr"=>""), parse(Int64, lines[2]), parse(Int64, lines[3]),
+                lines[4], strip(lines[5]), lines[6]
+            )
+        elseif length(lines) == 3
+            return BED(
+                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),
+                ".", ".", "."
+            )
+        elseif length(lines) == 4
+            return BED(
+                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),
+                ".", ".", strip(lines[4])
+            )
+        else
+            error(LOGGER, string("the number of columns mismatch: ", lines))
+            exit(1)
+        end
+    end
+
+    function get_bed_short(self::BED)::String
+        return Formatting.format(
+            FormatExpr("{}:{}-{}:{}"),
+            self.chrom, self.start_pos, self.end_pos, self.strand
+        )
     end
 
     Region = Union{Genomic.GTF, Genomic.BED}
@@ -153,7 +178,7 @@ module Genomic
                     end
 
                     if !haskey(data[gtf.Type], gtf.TranscriptID)
-                    data[gtf.Type][gtf.TranscriptID] = Vector()
+                        data[gtf.Type][gtf.TranscriptID] = Vector()
                     end
                     push!(data[gtf.Type][gtf.TranscriptID], gtf)
                 end

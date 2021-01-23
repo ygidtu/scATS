@@ -85,25 +85,34 @@ module ATSMIX
     end
     =#
 
-    mutable struct EMData
-        ws::Union{AbstractArray, Nothing}
-        alpha_arr::Union{Vector, Nothing}
-        beta_arr::Union{Vector, Nothing}
-        lb_arr::Union{Vector, Nothing}
-        bic::Union{Number, Nothing}
-        label
+    @with_kw mutable struct EMData
+        ws::Union{AbstractArray, Nothing} = nothing
+        alpha_arr::Union{Vector, Nothing} = nothing
+        beta_arr::Union{Vector, Nothing} = nothing
+        absolute_arr::Union{Vector, Nothing} = nothing
+        lb_arr::Union{Vector, Nothing} = nothing
+        bic::Union{Number, Nothing} = NaN
+        label = nothing
+        fragment_size::String = "normal"
     end
 
     Base.show(io::IO, self::EMData) = begin
         res = Vector{String}()
-        for i in [self.ws, self.alpha_arr, self.beta_arr, self.lb_arr, self.label]
+        for i in [self.ws, self.alpha_arr, self.beta_arr, self.absolute_arr]
             if isnothing(i)
                 i = "NA"
             else
                 i = join(map(string, i), ",")
             end
+
+            if i == ""
+                i = "."
+            end
+
             push!(res, i)
         end
+
+        push!(res, self.fragment_size)
 
         if isnothing(self.bic)
             push!(res, "NA")
@@ -115,7 +124,7 @@ module ATSMIX
     end
 
     function emptyData()::EMData
-        return EMData(nothing, nothing, nothing, nothing, nothing, nothing)
+        return EMData()
     end
 
     struct SplitData
@@ -199,7 +208,11 @@ module ATSMIX
             new_beta_arr[k] = params.max_beta
         end
 
-        return EMData(new_ws, new_alpha_arr, new_beta_arr, Vector(), NaN, nothing)
+        return EMData(
+            ws = new_ws, 
+            alpha_arr = new_alpha_arr, 
+            beta_arr = new_beta_arr
+        )
     end
 
     function elbo(log_zmat::AbstractArray, Z::AbstractArray)::Number
@@ -359,7 +372,13 @@ module ATSMIX
         ))
 
         lb_arr = lb_arr[findall(x -> !isnan(x), lb_arr)]
-        return EMData(ws, alpha_arr, beta_arr, lb_arr, bic, nothing)
+        return EMData(
+            ws = ws, 
+            alpha_arr = alpha_arr, 
+            beta_arr = beta_arr, 
+            lb_arr = lb_arr, 
+            bic = bic
+        )
     end
 
     # perform inference for K components
@@ -426,7 +445,13 @@ module ATSMIX
         beta_arr = beta_arr[sorted_inds]
         ws[1:K] = ws[sorted_inds]
 
-        return EMData(ws, alpha_arr, beta_arr, lb_arr, bic, nothing)
+        return EMData(
+            ws = ws, 
+            alpha_arr = alpha_arr, 
+            beta_arr = beta_arr, 
+            lb_arr = lb_arr, 
+            bic = bic
+        )
     end
 
     function rle(value::Vector)
@@ -566,7 +591,7 @@ module ATSMIX
         return res
     end
 
-    function em_optim0(n_ats::Int64; params::Param, n_trial::Int=20)
+    function em_optim0(n_ats::Int64; params::Param, n_trial::Int=20)::EMData
 
         lb_arr = [-Inf for _ = 1:n_trial]
         bic_arr = [-Inf for _ = 1:n_trial]
@@ -580,8 +605,6 @@ module ATSMIX
 
                 # initilize alpha_arr and beta_arr, considered pre_alpha_arr and pre_beta_arr
                 para_mat = init_para(n_ats, params.st_arr, params)
-
-                debug(LOGGER, string("em_optim0: ", para_mat))
 
                 res_list[i] = em_algo(ws, para_mat, n_trial; params=params)
             # catch e
@@ -665,6 +688,7 @@ module ATSMIX
                     end
                 end
             end
+            println(res)
             debug(LOGGER, string(res))
             if isnothing(res.ws) 
                 debug(LOGGER, "fit: Inference failed. No results available.")
@@ -688,8 +712,20 @@ module ATSMIX
             end
             
             if params.single_end_mode
-                res.beta_arr = res.beta_arr .+ sigma_f 
-            end 
+                res.beta_arr = res.beta_arr .+ params.sigma_f 
+            end
+
+            res.fragment_size = "normal"
+            len_arr = abs.(params.en_arr .- params.st_arr) .+ 1
+            mu_len = mean(len_arr)
+            if abs(mu_len - params.mu_f) > 2 * params.sigma_f
+                if mu_len - params.mu_f < 0
+                    res.fragment_size = "short"
+                else
+                    res.fragment_size = "long"
+                end
+            end   
+            
             return res
         catch e
             if isnothing(error_log)
@@ -705,8 +741,8 @@ module ATSMIX
                 ))
                 close(w)
             end
-
-            debug(LOGGER, e)
+            println(e)
+            debug(LOGGER, string(e))
         end
         return emptyData()
     end
@@ -778,14 +814,23 @@ module ATSMIX
                 label = res[6][2]
             end
 
+            fragment_size = nothing
+            if length(res) >= 7
+                fragment_size = res[7][2]
+            end
+
             if isnothing(alpha_arr)
                 return emptyData()
             end
 
             return EMData(
-                ws, alpha_arr, 
-                beta_arr, lb_arr,
-                res[5][2], label
+                ws = ws, 
+                alpha_arr = alpha_arr, 
+                beta_arr = beta_arr,
+                lb_arr = lb_arr,
+                bic = res[5][2],
+                label = label,
+                fragment_size = fragment_size
             )
         catch e
             
@@ -809,6 +854,7 @@ module ATSMIX
     end
 
     function fit(
+        utr,
         # maximum number of ATS sites
         n_max_ats::Int, 
         # minimum number of ATS sites
@@ -819,9 +865,6 @@ module ATSMIX
         st_arr::Vector, 
         # r, end location of each DNA fragment
         en_arr::Vector; 
-
-        # length of UTR region
-        L::Int=nothing, 
 
         # fragment size information
         # fragment length mean
@@ -848,14 +891,19 @@ module ATSMIX
         using_R::Bool = true,
 
         cage_mode::Bool = false,
-        error_log = nothing,
-    )
 
-        if !cage_mode && !single_end_mode
+        exon_coord::Union{Dict{Int, Int}, Nothing} = nothing,
+        error_log = nothing,
+        debug = false
+    )::Union{String, EMData}
+
+        if !cage_mode && !single_end_mode && length(st_arr) == length(en_arr)
             len_arr = abs.([y - x + 1 for (x, y) = zip(st_arr, en_arr)])
             mu_f = mean(len_arr)
             sigma_f = std(len_arr)
         end
+
+        L = abs(utr.End - utr.Start)
 
         unif_log_lik = 0
         if single_end_mode
@@ -890,7 +938,41 @@ module ATSMIX
         # toBSON(params, "test_R/test.bson")
         runner = using_R ? atsmix_by_R : atsmix
 
-        return runner(params, error_log)
+        res = runner(params, error_log)
 
+        if isnothing(res.bic) || isinf(res.bic)
+            return ""
+        end
+
+        res.absolute_arr = []
+        if !isnothing(exon_coord) && !isnothing(res.alpha_arr)
+            exon_coord = Dict(abs(y) =>x for (x, y) = exon_coord)
+
+            for i = res.alpha_arr
+                if haskey(exon_coord, i)
+                    push!(res.absolute_arr, exon_coord[i])
+                else
+                    push!(res.absolute_arr, utr.Strand == "+" ? utr.Start + abs(i) : utr.End - abs(i))
+                end
+            end
+        elseif !isnothing(res.alpha_arr)
+            for i = res.alpha_arr
+                push!(res.absolute_arr, utr.Strand == "+" ? utr.Start + abs(i) : utr.End - abs(i))
+            end
+        end
+
+        if debug
+            return res
+        end
+
+        return Formatting.format(
+            FormatExpr("{}:{}-{}:{}\t{}"),  # {}\t{}\t
+            utr.Chrom, utr.Start, utr.End, utr.Strand,
+            # join(map(string, st_arr), ","),
+            # join(map(string, en_arr), ","),
+            # join(map(string, data.real_st), ","),
+            # join(map(string, data.real_en), ","),
+            string(res)
+        )
     end
 end
