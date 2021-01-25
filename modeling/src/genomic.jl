@@ -5,6 +5,7 @@ module Genomic
     using BSON
     using Parameters
     using ProgressMeter
+    using OrderedCollections
 
     export GTF, Bed, create_GTF, load_GTF, isupstream, isdownstream, get_bed, new_bed
 
@@ -147,8 +148,9 @@ module Genomic
 
     function load_GTF(gtf::AbstractString)::Dict
         data = Dict(
-            "transcript"=>Dict{String, Genomic.GTF}(), 
-            "exon"=>Dict{String, Vector}()
+            "gene" => OrderedDict{String, Vector}(),   # genes and it's children transcript id
+            "transcript" => OrderedDict{String, Genomic.GTF}(),  # transcript id and GTF
+            "exon" => Dict{String, Vector}()  # transcript id and it's chiledren exons
         )
 
         open(gtf) do io
@@ -163,6 +165,10 @@ module Genomic
                     continue
                 end
 
+                if length(data["gene"]) > 500
+                    break
+                end
+
                 gtf = Genomic.create_GTF(line)
 
                 if gtf.Type == "transcript"
@@ -170,6 +176,11 @@ module Genomic
                     if !haskey(gtf.Attributes, "gene_biotype") || !(gtf.Attributes["gene_biotype"] in ["antisense", "lincRNA", "protein_coding"])
                         continue
                     end
+
+                    if !haskey(data["gene"], gtf.GeneID)
+                        data["gene"][gtf.GeneID] = Vector()
+                    end
+                    push!(data["gene"][gtf.GeneID], gtf.TranscriptID)
 
                     data[gtf.Type][gtf.ID] = gtf
                 elseif gtf.Type == "exon"

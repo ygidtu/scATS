@@ -272,9 +272,43 @@ module Extract
         return read_from_bam(path, utr, single_end_mode=single_end_mode, min_reads=min_reads)
     end
 
+
+    function convert_absolute_relative(exon_coord::Dict, exon_range::Vector, sites::Vector, is_reads_junc::Bool; is_read2::Bool = false)::Vector
+        site_relative = []
+        if is_reads_junc
+            if is_read2
+                s = NaN
+                for i = 1:2:length(exon_range)
+                    if exon_range[i] <= sites[2] <= exon_range[i + 1]
+                        s = exon_coord[exon_range[i]] - (exon_range[i] - sites[1])
+                        break
+                    end
+                end
+                push!(site_relative, s)
+                push!(site_relative, get(exon_coord, sites[2], NaN))
+
+            else
+                push!(site_relative, get(exon_coord, sites[1], NaN))
+
+                s = NaN
+                for i = 1:2:length(exon_range)
+                    if exon_range[i] <= sites[1] <= exon_range[i + 1]
+                        s = exon_coord[exon_range[i + 1]] + sites[2] - exon_range[i + 1]
+                    end
+                end
+                push!(site_relative, s)
+            end
+        else
+            for j = sites
+                push!(site_relative, get(exon_coord, j, NaN))
+            end
+        end
+ 
+        return site_relative
+    end
+
     function get_record_from_bam_transcript(path::String, transcript, exons::Vector; min_reads::Int=0, expand::String="200,1000")::Union{ExtractedData, Nothing}
-        bai = string(path, ".bai")
-        reader = open(BAM.Reader, path, index=bai)
+
         sites = Dict{}
 
         try
@@ -299,7 +333,10 @@ module Extract
         )
     
         utr_site = utr.Strand == "+" ? utr.Start : utr.End
-        for record in eachoverlap(reader, transcript.Chrom, utr.Start:utr.End)
+
+        bai = string(path, ".bai")
+        reader = open(BAM.Reader, path, index=bai)
+        for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
             if !filter(record)
                 continue
             end
@@ -307,13 +344,14 @@ module Extract
             # Only kept R1
             if BAM.flag(record) & SAM.FLAG_READ2 > 0
                 r2[BAM.tempname(record)] = Dict(
-                    "start"=>BAM.leftposition(record), 
-                    "end"=>BAM.rightposition(record),
+                    "start" => BAM.leftposition(record), 
+                    "end" => BAM.rightposition(record),
+                    "junc" => occursin("N", BAM.cigar(record))
                 )
                 continue
             end
 
-            if transcript.Start > BAM.leftposition(record) || transcript.End < BAM.rightposition(record)
+            if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
                 continue
             end
 
@@ -329,19 +367,21 @@ module Extract
             r1[BAM.tempname(record)] = Dict(
                 "start"=>BAM.leftposition(record), 
                 "end"=>BAM.rightposition(record),
+                "junc" => occursin("N", BAM.cigar(record))
             )
         end
         close(reader)
 
-        # sort!(exons)
 
         # convert genomic site of exons to relative pos in transcript
-        exon_coord = Dict{Int, Int}()
+        exon_coord, exon_range = Dict{Int, Int}(), Vector()
         for e = exons
             for i = e.Start:e.End
-                exon_coord[i] = exons[1].Start + length(exon_coord) + 1 - utr_site
+                exon_coord[i] = exons[1].Start + length(exon_coord) + 1
             end
+            append!(exon_range, [e.Start, e.End])
         end
+        
 
         utr_site = utr.Strand == "+" ? utr.Start : utr.End
         for (name, r1_pos) = r1
@@ -356,18 +396,44 @@ module Extract
                 continue
             end
 
-            # R2 end site, for Rn
-            end_site = strand == "-" ? r2_pos["start"] : r2_pos["end"]
-            # calcualte R1 start site  based on SE mode and strand
-            start_site = utr.Strand == "+" ? r1_pos["start"] : r1_pos["end"]
-            
+            site_relative = [
+                convert_absolute_relative(exon_coord, exon_range, [r1_pos["start"], r1_pos["end"]], r1_pos["junc"], is_read2 = false)...
+                convert_absolute_relative(exon_coord, exon_range, [r2_pos["start"], r2_pos["end"]], r2_pos["junc"], is_read2 = true)...
+            ]
 
-            if haskey(exon_coord, start_site) && haskey(exon_coord, end_site)
-                push!(st_arr, exon_coord[start_site])
-                push!(real_st, start_site)
+            if !any(isnan.(site_relative))
+                pass = false
+                if r1_pos["junc"] || r2_pos["junc"]
+                    for i = 1:2:length(exon_range)
+                        if exon_coord[exon_range[i]] <= site_relative[2] < exon_coord[exon_range[i + 1]]
+                            if exon_coord[exon_range[i]] < site_relative[3] <= exon_coord[exon_range[i+1]]
+                                
+                                # if reads is just locate on the edge of exons and junctions, then R1 and R2 needs to have at least 2 bp distance
+                                relative_exons = [exon_coord[x] for x = exon_range]
+                                if site_relative[2] in relative_exons || site_relative[3] in relative_exons
+                                    pass = site_relative[3] - site_relative[2] > 1
+                                else
+                                    pass = true
+                                end
+                                break
+                            end
+                        end
+                    end
+                end
+                
+                if !(r1_pos["junc"] || r2_pos["junc"]) || pass
+                    # R2 end site, for Rn
+                    end_site = strand == "-" ? site_relative[3] : site_relative[4]
+                    # calcualte R1 start site  based on SE mode and strand
+                    start_site = utr.Strand == "+" ? site_relative[1] : site_relative[2]
+                    
+                    push!(st_arr, start_site - utr_site)
+                    push!(real_st, strand == "+" ? r1_pos["start"] : r1_pos["end"])
 
-                push!(en_arr, exon_coord[end_site])
-                push!(real_en, end_site)
+                    push!(en_arr, end_site - utr_site)
+                    push!(real_en, strand == "-" ? r2_pos["start"] : r2_pos["end"])
+                    continue
+                end
             end
         end
 
