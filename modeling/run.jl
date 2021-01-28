@@ -1,10 +1,9 @@
 #!/usr/bin/env julia
 
 using ArgParse
-using BioGenerics
 using BSON
 using Distributed
-using XAM
+using Memento
 
 
 function parse_commandline()
@@ -13,10 +12,6 @@ function parse_commandline()
     @add_arg_table s begin
         "--input", "-i"
             help = "Path to utr bed"
-            arg_type = String
-            required = true
-        "--bam", "-b"
-            help = "Path to bam file"
             arg_type = String
             required = true
         "--output", "-o"
@@ -84,6 +79,11 @@ function parse_commandline()
         "--debug"
             help="whether to run in debug mode"
             action = :store_true
+        "bam"
+            help = "Path to bam file"
+            required = true
+            action = :store_arg
+            nargs = '+'
     end
 
     return parse_args(s)
@@ -95,9 +95,13 @@ if args["process"] > 1
     addprocs(args["process"])
 end
 
+logger = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
+if args["verbose"]
+    logger = Memento.config!("debug"; fmt="[{date} - {level} | {name}]: {msg} | {stacktrace}")
+end
+
 @everywhere begin
     using FilePathsBase
-    using Memento
     using ProgressMeter
     
     using Gadfly
@@ -112,13 +116,13 @@ end
 
 
 function normal_pipeline(
-    input_file::String, bam::String, output::Union{String, PosixPath};
+    input_file::String, bam::Vector, output::Union{String, PosixPath};
     mu_f::Int64=300, min_ws::Float64=0.01,
     max_beta::Float64=50.0, sigma_f::Int64=50,
-    using_R::Bool=true, verbose::Bool=false,
     n_max_ats::Int=5, n_min_ats::Int=1,
     fixed_inference::Bool=false, single_end::Bool=false,
     min_reads::Int=0, cage_mode::Bool = false,
+    using_R::Bool=true, seed::Int=42
 )
     beds = []  # Dict{String, Vector}()
     r = open(input_file, "r")
@@ -163,7 +167,7 @@ function normal_pipeline(
                 mu_f = mu_f, sigma_f = sigma_f, min_ws = min_ws, 
                 max_beta = max_beta, fixed_inference_flag = fixed_inference,
                 single_end_mode = single_end, cage_mode=cage_mode,
-                using_R = using_R, error_log = error_log
+                using_R = using_R, error_log = error_log, seed=seed
             )
             if r != ""
                 write(w, string(r, "\n"))
@@ -175,14 +179,14 @@ end
 
 
 function identify_pipeline(
-    input_file::String, bam::String, output::Union{String, PosixPath};
+    input_file::String, bam::Vector, output::Union{String, PosixPath};
     mu_f::Int64=300, min_ws::Float64=0.01,
     max_beta::Float64=50.0, sigma_f::Int64=50,
-    using_R::Bool=true, verbose::Bool=false,
     n_max_ats::Int=5, n_min_ats::Int=1,
     fixed_inference::Bool=false, single_end::Bool=false,
     min_reads::Int=0, cage_mode::Bool = false,
-    expand::String="200,800"
+    expand::String="200,800", 
+    using_R::Bool=true, seed::Int=42
 )
     gtf = Genomic.load_GTF(input_file)
 
@@ -197,7 +201,7 @@ function identify_pipeline(
                 expand = expand
             )
 
-            if length(data.st_arr) == 0
+            if isnothing(data) || length(data.st_arr) == 0
                 continue
             end
 
@@ -226,21 +230,16 @@ end
 
 
 function main(
-    input_file::String, bam::String, output::String;
+    input_file::String, bam::Vector, output::String;
     mu_f::Int64=300, min_ws::Float64=0.01,
     max_beta::Float64=50.0, sigma_f::Int64=50,
-    using_R::Bool=true, verbose::Bool=false,
+    using_R::Bool=true,
     n_max_ats::Int=5, n_min_ats::Int=1,
     fixed_inference::Bool=false, single_end::Bool=false,
     min_reads::Int=0, cage_mode::Bool = false,
     identify::Bool = false, expand::String="200,1000",
-    debug::Bool = false
+    debug::Bool = false, seed::Int=42
 )
-
-    logger = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
-    if verbose
-        logger = Memento.config!("debug"; fmt="[{date} - {level} | {name}]: {msg} | {stacktrace}")
-    end
     output = absolute(Path(output))
     out_dir = parent(output)
     try
@@ -252,10 +251,6 @@ function main(
         exit(1)
     end
 
-    if verbose
-        Extract.setLevel("debug")
-    end
-
     if identify
         if debug
             return test1()
@@ -264,11 +259,11 @@ function main(
             input_file, bam, output, 
             mu_f=mu_f, min_ws=min_ws,
             max_beta=max_beta, sigma_f=sigma_f,
-            using_R=using_R, verbose=verbose,
+            using_R=using_R,
             n_max_ats=n_max_ats, n_min_ats=n_min_ats,
             fixed_inference=fixed_inference, single_end=single_end,
             min_reads=min_reads, cage_mode=cage_mode,
-            expand=expand
+            expand=expand, seed=seed
         )
     else
         if debug
@@ -279,10 +274,11 @@ function main(
             input_file, bam, output, 
             mu_f=mu_f, min_ws=min_ws,
             max_beta=max_beta, sigma_f=sigma_f,
-            using_R=using_R, verbose=verbose,
+            using_R=using_R,
             n_max_ats=n_max_ats, n_min_ats=n_min_ats,
             fixed_inference=fixed_inference, single_end=single_end,
             min_reads=min_reads, cage_mode=cage_mode,
+            seed=seed
         )
     end
 end
@@ -391,6 +387,7 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
                 for i = 1:2:length(exon_range)
                     if exon_range[i] <= sites[1] <= exon_range[i + 1]
                         s = exon_coord[exon_range[i + 1]] + sites[2] - exon_range[i + 1]
+                        break
                     end
                 end
                 push!(site_relative, s)
@@ -404,7 +401,7 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
         return site_relative
     end
     
-    for seed = 1:5
+    for seed = 1:1
         gtf = Genomic.load_GTF(joinpath(@__DIR__, "..", string("tests/", seed, ".gtf")))
 
         for (t_name, transcript) = gtf["transcript"]
@@ -424,8 +421,11 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
 
             st_arr = Vector()
             en_arr = Vector()
-            real_st = Vector()
-            real_en = Vector()
+            r1_st = Vector()
+            r1_en = Vector()
+            r2_st = Vector()
+            r2_en = Vector()
+            relative = Vector()
 
             # r1_site, r2_site = [2336, 2442], [2701, 2792]
 
@@ -441,8 +441,14 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
                 while !eof(r)
                     line = readline(r)
                     line = split(strip(line), ",")
+
+                    # if line[7] != t_name
+                    #     continue
+                    # end
+
                     is_read1_junc = line[5] == "TRUE" # || line[6] == "TRUE"
                     is_read2_junc = line[6] == "TRUE"
+
                     line = parse.(Int, line[1:4])
                     # println(line)
                     r1_site = [line[1], line[2]]
@@ -465,44 +471,69 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
                         # [2336, 2792],
                         # [1934, 3947],
                         # [2554, 3957],
-                        [1809, 4055],
+                        # [1952, 2723],
+                        # [2970, 4467],
+                        # [3002, 4537],
+                        # [2268, 4190],
+                        [3002,4537]
                     ]
 
                     if !any(isnan.(site_relative))
                         pass = false
+                        failed_on_border = true
+                        pass1 = false
+                        pass2 = false
 
-                        if is_read1_junc || is_read2_junc # && (site_relative[3] - site_relative[2] > 1 && any([abs(exon_coord[x] - site_relative[2]) <= 1 for x = exon_range]))
-                            for i = 1:2:length(exon_range)
-                                if exon_coord[exon_range[i]] <= site_relative[2] < exon_coord[exon_range[i + 1]]
-                                    if exon_coord[exon_range[i]] < site_relative[3] <= exon_coord[exon_range[i+1]]
-                                        
-                                        # if reads is just locate on the edge of exons and junctions, then R1 and R2 needs to have at least 2 bp distance
-                                        relative_exons = [exon_coord[x] for x = exon_range]
-                                        if site_relative[2] in relative_exons || site_relative[3] in relative_exons
-                                            pass = site_relative[3] - site_relative[2] > 1
-                                        else
-                                            pass = true
-                                        end
-                                        break
-                                    end
+                        # println(junc_sites)
+                        relative_exons = [exon_coord[x] for x = exon_range]
+                        if site_relative[2] in relative_exons || site_relative[3] in relative_exons
+                            failed_on_border = abs(site_relative[3] - site_relative[2]) <= 1
+                        else
+                            failed_on_border = false
+                        end
+                        
+                        
+                        for j = 1:2:length(relative_exons)
+                            if is_read1_junc
+                                if relative_exons[j] <= site_relative[1] <= relative_exons[j + 1] < site_relative[2]
+                                    pass1 = true
                                 end
+                            elseif relative_exons[j] <= site_relative[1] < site_relative[2] <= relative_exons[j + 1]
+                                pass1 = true
+                            end
+
+                            if is_read2_junc
+                                if site_relative[3] < relative_exons[j] <= site_relative[4] <= relative_exons[j + 1]
+                                    pass2 = true
+                                end
+                            elseif relative_exons[j] <= site_relative[3] < site_relative[4] <= relative_exons[j + 1]
+                                pass2 = true
+                            end
+                            
+                            if pass1 && pass2
+                                break
                             end
                         end
+
+                        
+                        pass = pass1 && pass2 && !failed_on_border
                         
                         # if r1_site[1] == 2257 && r2_site[2] == 4045 || r1_site[1] == 2083 && r2_site[2] == 4050 || r1_site[1] == 2239 && r2_site[2] == 4361
                         if any([r1_site[1] == x[1] && r2_site[2] == x[2] for x = debug_site])
                             println(string(t_name, ": ", is_read1_junc, "-", is_read2_junc, "; pass = ", pass, "; sites: ", site_relative))
                             println(string("r1: ", r1_site, "; r2: ", r2_site))
                             println(string("!(is_read1_junc || is_read2_junc) = ", !(is_read1_junc || is_read2_junc), " all(site_relative .> 0) == ", all(site_relative .> 0)))
-                            println(string("exon_range: ", [exon_coord[x] for x = exon_range]))
+                            println(string("exon_range: ", exon_range, "; relative range: ",[exon_coord[x] for x = exon_range]))
                         end
 
                         if !(is_read1_junc || is_read2_junc) || pass
                             push!(st_arr, site_relative[1])
-                            push!(real_st, start_site)
-
                             push!(en_arr, site_relative[4])
-                            push!(real_en, end_site)
+                            
+                            push!(r1_st, r1_site[1])
+                            push!(r1_en, r1_site[2])
+                            push!(r2_st, r2_site[1])
+                            push!(r2_en, r2_site[2])
                             continue
                         end
                     else
@@ -515,15 +546,19 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
                     end
     
                     push!(st_arr, 0)
-                    push!(real_st, start_site)
-
                     push!(en_arr, 0)
-                    push!(real_en, end_site)
+
+                    push!(r1_st, r1_site[1])
+                    push!(r1_en, r1_site[2])
+                    push!(r2_st, r2_site[1])
+                    push!(r2_en, r2_site[2])
+
+                    push!(relative, join(map(string, site_relative), "|"))
                 end
                 close(r)
             end
 
-            df = DataFrame(st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en)
+            df = DataFrame(st_arr = st_arr, en_arr = en_arr, r1_st = r1_st, r1_en = r1_en, r2_st = r2_st, r2_en = r2_en)
 
             CSV.write(joinpath(@__DIR__, "..", "tests", string(t_name, "_", seed, ".csv")), df)
         end
@@ -583,7 +618,7 @@ main(
     n_max_ats=args["n-max-ats"], n_min_ats=args["n-min-ats"],
     fixed_inference=args["fixed-inference"], single_end=args["single-end"], 
     min_reads=args["min-reads"], expand=args["expand"],
-    verbose=args["verbose"], identify = args["identify"],
+    identify = args["identify"],
+    seed=args["seed"],
     debug=get(args, "debug", false)
 )
-

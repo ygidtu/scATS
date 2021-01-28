@@ -598,7 +598,7 @@ module ATSMIX
         res_list = Array{EMData}(undef, n_trial, 1)
 
         for i = 1:n_trial
-            # try
+            try
                 ws = rand(MersenneTwister(params.seed), n_ats + 1) .+ 1
                 ws[n_ats + 1] = params.max_unif_ws
                 ws = ws / sum(ws)
@@ -607,13 +607,13 @@ module ATSMIX
                 para_mat = init_para(n_ats, params.st_arr, params)
 
                 res_list[i] = em_algo(ws, para_mat, n_trial; params=params)
-            # catch e
-            #     println(e)
-            #     debug(LOGGER, Formatting.format(
-            #         FormatExpr("em_optim0: Error found  in {} trial. Next - {}"), i, e
-            #     ))
-            #     res_list[i] = emptyData()
-            # end
+            catch e
+                # println(e)
+                debug(LOGGER, Formatting.format(
+                    FormatExpr("em_optim0: Error found  in {} trial. Next - {}"), i, e
+                ))
+                res_list[i] = emptyData()
+            end
 
             if isnothing(res_list[i].alpha_arr)
                 continue
@@ -688,7 +688,7 @@ module ATSMIX
                     end
                 end
             end
-            println(res)
+            # println(res)
             debug(LOGGER, string(res))
             if isnothing(res.ws) 
                 debug(LOGGER, "fit: Inference failed. No results available.")
@@ -741,7 +741,7 @@ module ATSMIX
                 ))
                 close(w)
             end
-            println(e)
+            # println(e)
             debug(LOGGER, string(e))
         end
         return emptyData()
@@ -847,7 +847,7 @@ module ATSMIX
                 ))
                 close(w)
             end
-            println(e)
+            # println(e)
             debug(LOGGER, string(e))
             return emptyData()
         end

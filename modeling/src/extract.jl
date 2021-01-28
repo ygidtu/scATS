@@ -25,14 +25,14 @@ module Extract
         Memento.register(LOGGER)
     end
 
-    export  ExtractedData, get_bed_short, get_record_from_bam, get_record_from_bam_transcript, run, setLevel
+    export  TestData, get_bed_short, get_record_from_bam, get_record_from_bam_transcript, run, setLevel
 
     function setLevel(level::String)
         setlevel!(LOGGER, level)
         ATSMIX.setLevel(level)
     end
 
-    @with_kw struct ExtractedData
+    @with_kw struct TestData
         utr
         st_arr::Vector
         en_arr::Vector
@@ -41,7 +41,7 @@ module Extract
         exon_coord::Dict{Int, Int} = Dict()
     end
 
-    Base.show(io::IO, self::ExtractedData) = print(
+    Base.show(io::IO, self::TestData) = print(
         io,
         Formatting.format(
             FormatExpr("utr: {}\nst_arr: {}\nen_arr: {}"), # \nreal_st: {}\nreal_en: {}
@@ -51,8 +51,34 @@ module Extract
         )
     )
 
-    function get_utr(data::ExtractedData)::String
+    function get_utr(data::TestData)::String
         return string(data.utr.chrom, "_", data.utr.start_pos, "_", data.utr.end_pos, "_", data.utr.strand)
+    end
+
+    @with_kw struct Reads
+        start_pos::Int
+        end_pos::Int
+        intron_site::Vector{Int}
+        source::Union{String, Nothing} = nothing
+    end
+
+    @with_kw struct ExtractData
+        utr
+        R1::Vector{Reads}
+        R2::Vector{Reads}
+    end
+
+    function toDict(self)::Dict
+        if typeof(self) == ExtractData
+            return Dict(
+                toDict(self.utr) => Dict(
+                    Symbol("R1") => toDict(self.R1),
+                    Symbol("R2") => toDict(self.R2)
+                )
+            )
+        end
+
+        return Dict(x => getfield(self, x) for x = fieldnames(typeof(self)))
     end
 
     function filter(record)::Bool
@@ -96,54 +122,76 @@ module Extract
     end
 
 
-    function read_from_bam(path::String,  utr; single_end_mode::Bool = false, min_reads::Int=0)::Union{ExtractedData, Nothing}
-        bai = string(path, ".bai")
-        reader = open(BAM.Reader, path, index=bai)
-        sites = Dict{}
+    function cigar_to_intron(record)::Vector
+        res = Vector()
+        cigar = BAM.cigar(record)
+        init = BAM.leftposition(record)
+        dist = ""
+        skip_code = Dict('I' => 0, 'D' => 0, 'H' => 0, 'S' => 0)
+        for i = cigar
+            try
+                parse(Int, i)
+                dist = string(dist, i)             
+            catch
+                if !haskey(skip_code, i)
+                    init += parse(Int, dist)
+                end
+            
+                if i == 'N'
+                    push!(res, init - parse(Int, dist))
+                    push!(res, init)
+                end
+                dist = ""
+            end
+        end
+        return res
+    end
 
+    function read_from_bam(path::Vector,  utr; single_end_mode::Bool = false, min_reads::Int=0)::Union{TestData, ExtractData, Nothing}
         st_arr, en_arr = Vector(), Vector()
         real_st, real_en = Vector(), Vector()
         r1, r2 = Dict(), Dict()
 
-        for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
-            if !filter(record)
-                continue
-            end
+        for p = path
+            key = basename(Path(p))
+            bai = string(p, ".bai")
 
-            if BAM.flag(record) & SAM.FLAG_PROPER_PAIR == 0
-                continue
-            end
-            
-            if !single_end_mode && !BAM.isnextmapped(record)
-                continue
-            end
-            
-            # Only kept R2
-            if BAM.flag(record) & SAM.FLAG_READ1 > 0
-                r1[BAM.tempname(record)] = Dict(
-                    "start"=>BAM.leftposition(record), 
-                    "end"=>BAM.rightposition(record),
-                )
-                continue
-            end
+            reader = open(BAM.Reader, p, index=bai)
 
-            # R2 needs locate in UTR
-            if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
-                continue
-            end
+            for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
+                if !filter(record)
+                    continue
+                end
 
-            # read strand
-            strand = determine_strand(record)
-            if strand != utr.Strand
-                continue
-            end
+                if BAM.flag(record) & SAM.FLAG_PROPER_PAIR == 0
+                    continue
+                end
+                
+                if !single_end_mode && !BAM.isnextmapped(record)
+                    continue
+                end
+                
+                # Only kept R2
+                if BAM.flag(record) & SAM.FLAG_READ1 > 0
+                    r1[string(key, "|", BAM.tempname(record))] = record
+                    continue
+                end
 
-            r2[BAM.tempname(record)] = Dict(
-                "start"=>BAM.leftposition(record), 
-                "end"=>BAM.rightposition(record)
-            )           
+                # R2 needs locate in UTR
+                if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
+                    continue
+                end
+
+                # read strand
+                strand = determine_strand(record)
+                if strand != utr.Strand
+                    continue
+                end
+
+                r2[string(key, "|", BAM.tempname(record))] = record
+            end
+            close(reader)
         end
-        close(reader)
 
         utr_site = utr.Strand == "+" ? utr.Start : utr.End
         for (name, site) = r2
@@ -154,76 +202,99 @@ module Extract
             end
 
             # R1 needs locate in UTR
-            if !single_end_mode && (utr.Start > r1_pos["start"] || utr.End < r1_pos["end"])
+            if !single_end_mode && (utr.Start > BAM.leftposition(r1_pos) || utr.End < BAM.rightposition(r1_pos))
                 continue
             end
 
             # R2 end site, for Rn
-            end_site = strand == "-" ? site["start"] : site["end"]
+            if is_extract
+                push!(st_arr, Reads(
+                    start_pos = BAM.leftposition(r1_pos),
+                    end_pos = BAM.rightposition(r1_pos),
+                    intron_site = cigar_to_intron(r1_pos),
+                    source = split(name, "|")[1]
+                ))
 
-            push!(en_arr, end_site - utr_site)
-            push!(real_en, end_site)
-
-            # calcualte R1 start site  based on SE mode and strand
-            start_site = NaN
-            if single_end_mode
-                push!(st_arr, start_site)
+                push!(en_arr, Reads(
+                    start_pos = BAM.leftposition(site),
+                    end_pos = BAM.rightposition(site),
+                    intron_site = cigar_to_intron(site),
+                    source = split(name, "|")[1]
+                ))
             else
-                start_site = utr.Strand == "+" ? r1_pos["start"] : r1_pos["end"]
-                
-                push!(st_arr, start_site - utr_site)
-                push!(real_st, start_site)
+                end_site = strand == "-" ? BAM.leftposition(site) : BAM.rightposition(site)
+
+                push!(en_arr, end_site - utr_site)
+                push!(real_en, end_site)
+
+                # calcualte R1 start site  based on SE mode and strand
+                start_site = NaN
+                if single_end_mode
+                    push!(st_arr, start_site)
+                else
+                    start_site = utr.Strand == "+" ? BAM.leftposition(r1_pos) : BAM.rightposition(r1_pos)
+                    
+                    push!(st_arr, start_site - utr_site)
+                    push!(real_st, start_site)
+                end
             end
         end
 
-        if length(st_arr) > min_reads
-            return ExtractedData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en)
+        if is_extract
+            return ExtractData(utr = utr, R1 = st_arr, R2 = en_arr)
+        elseif length(st_arr) > min_reads
+            return TestData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en)
         end
 
         return nothing
     end
 
-    function read_from_bam_cage(path::String,  utr; min_reads::Int=0)::Union{ExtractedData, Nothing}
-        bai = string(path, ".bai")
-        reader = open(BAM.Reader, path, index=bai)
-        sites = Dict{}
+    function read_from_bam_cage(path::Vector, utr; min_reads::Int=0)::Union{TestData, Nothing}
 
         st_arr, en_arr = Vector(), Vector()
         real_st, real_en = Vector(), Vector()
         r1, r2 = Dict(), Dict()
 
-        utr_site = utr.Strand == "+" ? utr.Start : utr.End
-        for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
-            if !filter(record)
-                continue
-            end
+        for p = path
+            key = basename(Path(p))
+            bai = string(p, ".bai")
+ 
+            reader = open(BAM.Reader, p, index=bai)
+            sites = Dict{}
 
-            # Only kept R1
-            if BAM.flag(record) & SAM.FLAG_READ2 > 0
-                r2[BAM.tempname(record)] = Dict(
+            utr_site = utr.Strand == "+" ? utr.Start : utr.End
+            for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
+                if !filter(record)
+                    continue
+                end
+
+                # Only kept R1
+                if BAM.flag(record) & SAM.FLAG_READ2 > 0
+                    r2[string(key, "|", BAM.tempname(record))] = Dict(
+                        "start"=>BAM.leftposition(record), 
+                        "end"=>BAM.rightposition(record),
+                    )
+                    continue
+                end
+
+                if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
+                    continue
+                end
+
+                # read strand
+                strand = determine_strand(record)
+
+                if strand != utr.Strand
+                    continue
+                end
+
+                r1[string(key, "|", BAM.tempname(record))] = Dict(
                     "start"=>BAM.leftposition(record), 
                     "end"=>BAM.rightposition(record),
                 )
-                continue
             end
-
-            if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
-                continue
-            end
-
-            # read strand
-            strand = determine_strand(record)
-
-            if strand != utr.Strand
-                continue
-            end
-
-            r1[BAM.tempname(record)] = Dict(
-                "start"=>BAM.leftposition(record), 
-                "end"=>BAM.rightposition(record),
-            )
+            close(reader)
         end
-        close(reader)
 
         utr_site = utr.Strand == "+" ? utr.Start : utr.End
         for (name, r1_pos) = r1
@@ -252,19 +323,19 @@ module Extract
         end
 
         if length(st_arr) > min_reads
-           return ExtractedData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en)
+           return TestData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en)
         end
 
         return nothing
     end
 
     function get_record_from_bam(
-        path::String, 
+        path::Union{Vector, String}, 
         utr;
         single_end_mode::Bool = false,
         min_reads::Int=0,
         cage_mode::Bool = false
-    )::Union{ExtractedData, Nothing}
+    )::Union{TestData, ExtractData, Nothing}
 
         if cage_mode
             return read_from_bam_cage(path, utr, min_reads=min_reads)
@@ -307,7 +378,48 @@ module Extract
         return site_relative
     end
 
-    function get_record_from_bam_transcript(path::String, transcript, exons::Vector; min_reads::Int=0, expand::String="200,1000")::Union{ExtractedData, Nothing}
+
+    function is_reads_pass(exon_coord::Dict, exon_range::AbstractArray, site_relative::AbstractArray; is_read1_junc::Bool, is_read2_junc::Bool)::Bool
+        pass = false
+        failed_on_border = true
+        pass1 = false
+        pass2 = false
+
+        # println(junc_sites)
+        relative_exons = [exon_coord[x] for x = exon_range]
+        if site_relative[2] in relative_exons || site_relative[3] in relative_exons
+            failed_on_border = abs(site_relative[3] - site_relative[2]) <= 1
+        else
+            failed_on_border = false
+        end
+        
+        
+        for j = 1:2:length(relative_exons)
+            if is_read1_junc
+                if relative_exons[j] <= site_relative[1] <= relative_exons[j + 1] < site_relative[2]
+                    pass1 = true
+                end
+            elseif relative_exons[j] <= site_relative[1] < site_relative[2] <= relative_exons[j + 1]
+                pass1 = true
+            end
+
+            if is_read2_junc
+                if site_relative[3] < relative_exons[j] <= site_relative[4] <= relative_exons[j + 1]
+                    pass2 = true
+                end
+            elseif relative_exons[j] <= site_relative[3] < site_relative[4] <= relative_exons[j + 1]
+                pass2 = true
+            end
+            
+            if pass1 && pass2
+                break
+            end
+        end
+
+        return pass1 && pass2 && !failed_on_border
+    end
+
+    function get_record_from_bam_transcript(path::String, transcript, exons::Vector; min_reads::Int=0, expand::String="200,1000")::Union{TestData, Nothing}
 
         sites = Dict{}
 
@@ -374,7 +486,8 @@ module Extract
 
 
         # convert genomic site of exons to relative pos in transcript
-        exon_coord, exon_range = Dict{Int, Int}(), Vector()
+        exon_coord = Dict{Int, Int}()
+        exon_range = Vector()
         for e = exons
             for i = e.Start:e.End
                 exon_coord[i] = exons[1].Start + length(exon_coord) + 1
@@ -382,7 +495,6 @@ module Extract
             append!(exon_range, [e.Start, e.End])
         end
         
-
         utr_site = utr.Strand == "+" ? utr.Start : utr.End
         for (name, r1_pos) = r1
             r2_pos = get(r2, name, nothing)
@@ -402,26 +514,8 @@ module Extract
             ]
 
             if !any(isnan.(site_relative))
-                pass = false
-                if r1_pos["junc"] || r2_pos["junc"]
-                    for i = 1:2:length(exon_range)
-                        if exon_coord[exon_range[i]] <= site_relative[2] < exon_coord[exon_range[i + 1]]
-                            if exon_coord[exon_range[i]] < site_relative[3] <= exon_coord[exon_range[i+1]]
-                                
-                                # if reads is just locate on the edge of exons and junctions, then R1 and R2 needs to have at least 2 bp distance
-                                relative_exons = [exon_coord[x] for x = exon_range]
-                                if site_relative[2] in relative_exons || site_relative[3] in relative_exons
-                                    pass = site_relative[3] - site_relative[2] > 1
-                                else
-                                    pass = true
-                                end
-                                break
-                            end
-                        end
-                    end
-                end
-                
-                if !(r1_pos["junc"] || r2_pos["junc"]) || pass
+                  
+                if !(r1_pos["junc"] || r2_pos["junc"]) || is_reads_pass(exon_coord, exon_range, site_relative, is_read1_junc=r1_pos["junc"], is_read2_junc=r2_pos["junc"])
                     # R2 end site, for Rn
                     end_site = strand == "-" ? site_relative[3] : site_relative[4]
                     # calcualte R1 start site  based on SE mode and strand
@@ -438,7 +532,7 @@ module Extract
         end
 
         if length(st_arr) > min_reads
-            return ExtractedData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en, exon_coord = exon_coord)
+            return TestData(utr = utr, st_arr = st_arr, en_arr = en_arr, real_st = real_st, real_en = real_en, exon_coord = exon_coord)
         end
         
         return nothing
