@@ -505,16 +505,16 @@ atsmix = function(n_max_ats, # maximum number of ATS sites
   len_arr = -st_arr+en_arr+1
   mu_len = mean(len_arr)
   if(abs(mu_len-mu_f)>2*sigma_f){
-    warning(
-      paste0('mean of fragment size is ',round(mu_len),
-             ', which deviates from mu_f=',mu_f, ' by more than 2*sigma_f=', 2*sigma_f ,' bp.\n')
-    )
+    # warning(
+    #   paste0('mean of fragment size is ',round(mu_len),
+    #          ', which deviates from mu_f=',mu_f, ' by more than 2*sigma_f=', 2*sigma_f ,' bp.\n')
+    # )
     if(mu_len-mu_f<0){
       res$fragment_size_flag = 'short'
-      warning('fragment size shorter than expected.\n')
+      # warning('fragment size shorter than expected.\n')
     }else{
       res$fragment_size_flag = 'long'
-      warning('fragment size longer than expected. Potential exon skipping. \n')
+      # warning('fragment size longer than expected. Potential exon skipping. \n')
     }
   }
   

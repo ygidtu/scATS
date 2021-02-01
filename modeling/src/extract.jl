@@ -25,7 +25,7 @@ module Extract
         Memento.register(LOGGER)
     end
 
-    export  TestData, get_bed_short, get_record_from_bam, get_record_from_bam_transcript, run, setLevel
+    export  TestData, get_bed_short, get_record_from_bam, get_record_from_bam_transcript, run, setLevel, read_from_bam
 
     function setLevel(level::String)
         setlevel!(LOGGER, level)
@@ -147,7 +147,7 @@ module Extract
         return res
     end
 
-    function read_from_bam(path::Vector,  utr; single_end_mode::Bool = false, min_reads::Int=0)::Union{TestData, ExtractData, Nothing}
+    function read_from_bam(path::Vector,  utr; single_end_mode::Bool = false, min_reads::Int=0, is_extract::Bool = false)::Union{TestData, ExtractData, Nothing}
         st_arr, en_arr = Vector(), Vector()
         real_st, real_en = Vector(), Vector()
         r1, r2 = Dict(), Dict()
@@ -305,7 +305,7 @@ module Extract
             end
 
             # R1 needs locate in UTR
-            if !single_end_mode && (utr.Start > r1_pos["start"] || utr.End < r1_pos["end"])
+            if utr.Start > r1_pos["start"] || utr.End < r1_pos["end"]
                 continue
             end
 

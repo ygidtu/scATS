@@ -42,14 +42,17 @@ end
 
 
 @everywhere begin
+    using BioAlignments
     using FilePathsBase
+    using GenomicFeatures
     using Memento
     using ProgressMeter
+    using XAM
     
     #=
     using StatsBase
     =#
-    include(joinpath(@__DIR__, "src", "extract.jl"))
+    include(joinpath(@__DIR__, "src", "genomic.jl"))
 
     function filter(record)::Bool
         #=
@@ -95,12 +98,12 @@ end
         return strand
     end
 
-    function count_reads(bam::String, region::Extract.BEDRecord, barcodes::Vector{String})::Dict{String, Int}
+    function count_reads(bam::String, region::Genomic.BED, barcodes::Vector{String})::Dict{String, Int}
         res = Dict(x => Dict() for x = barcodes)
 
-        reader = open(BAM.Reader, path, index=string(bam, ".bai"))
+        reader = open(BAM.Reader, bam, index=string(bam, ".bai"))
 
-        for record in eachoverlap(reader, region.chrom, region.start_pos:region.end_pos)
+        for record in eachoverlap(reader, region.Chrom, region.Start:region.End)
             if !filter(record)
                 continue
             end
@@ -108,12 +111,16 @@ end
             # read strand
             strand = determine_strand(record)
 
-            if strand != region.strand
+            if strand != region.Strand
                 continue
             end
             auxdata = Dict(BAM.auxdata(record))
             cb = auxdata["CB"]
             ub = auxdata["UB"]
+
+            if !haskey(res, cb)
+                res[cb] = Dict()
+            end
 
             res[cb][ub] = 1
         end
@@ -123,22 +130,53 @@ end
 end
 
 
-function main(input_file::String, cellranger::String, output::String)
+function load_bed(input_file::String)
     beds = []  # Dict{String, Vector}()
     open(input_file, "r") do r
         seekend(r)
         fileSize = position(r)
 
-        if verbose
-            Extract.setLevel("debug")
-        end
-
         seekstart(r)
         p = Progress(fileSize, 1)   # minimum update interval: 1 second
         while !eof(r)
-            temp_bed = Extract.new_bed(readline(r)) #, chromosomes=chromosomes)
 
-            push!(beds, temp_bed)
+            line = split(strip(readline(r)), "\t")
+            
+            if line[length(line)] == "NA"
+                continue
+            end
+
+            try
+                bic = parse(Float64, line[length(line)])
+                if isinf(bic)
+                    continue
+                end
+            catch e
+                continue
+            end
+
+            site = split(line[1], r"[:-]")
+
+            strand = site[length(site)]
+            if strand != "+"
+                strand = "-"
+            end
+
+            chrom, start_pos, end_pos = site[1], parse(Int, site[2]), parse(Int, site[3])
+            alpha = split(line[5], ",")
+
+            if length(alpha) > 0
+                try
+                    for x = alpha
+                        if x != ""
+                            s = round(Int, parse(Float64, x))
+
+                            push!(beds, Genomic.BED(chrom, s, s + 1, line[1], string(length(beds) + 1), strand))
+                        end
+                    end
+                catch e
+                end
+            end
 
             if length(beds) > 500
                 break
@@ -149,6 +187,13 @@ function main(input_file::String, cellranger::String, output::String)
         close(r)
     end
 
+    return beds
+end
+
+
+function main(input_file::String, cellranger::String, output::String)
+    beds = load_bed(input_file)
+
     # read barcodes
     barcodes = Vector{String}()
     barcode = joinpath(cellranger, "filtered_feature_bc_matrix/barcodes.tsv.gz")
@@ -158,6 +203,28 @@ function main(input_file::String, cellranger::String, output::String)
 
     bam = joinpath(cellranger, "possorted_genome_bam.bam")
 
+    res = @showprogress 1 "Counting..." pmap(beds) do b
+        res = count_reads(bam,  b, barcodes)
+
+        row = [string(b)]
+        for barcode = barcodes
+            push!(row, string(res[barcode]))
+        end
+
+        return row
+    end
+    
+    output = absolute(Path(output))
+    out_dir = parent(output)
+    try
+        if !exists(out_dir)
+            mkdir(Path(out_dir), recursive=true)
+        end
+    catch e
+        error(logger, Formatting.format(FormatExpr("Error while create {}: {}"), output, e))
+        exit(1)
+    end
+
     open(output, "w+") do w
 
         stream = nothing
@@ -166,16 +233,9 @@ function main(input_file::String, cellranger::String, output::String)
             stream = ZlibDeflateOutputStream(w)
         end
 
-        write(w, string(",", ",".join(barcodes), "\n"))
+        write(isnothing(stream) ? w : stream, string(",", ",".join(barcodes), "\n"))
 
-        @showprogress 1 "Counting..." pmap(beds) do b
-            res = count_reads(bam,  b, barcodes)
-
-            row = [Extract.get_bed_short(b)]
-            for barcode = barcodes
-                push!(row, string(res[barcode]))
-            end
-
+        for row = res
             write(isnothing(stream) ? w : stream, string(",".join(row), "\n"))
         end
 

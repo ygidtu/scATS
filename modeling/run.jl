@@ -101,10 +101,13 @@ if args["verbose"]
 end
 
 @everywhere begin
+    using BGZFStreams
+    using BioAlignments
     using FilePathsBase
     using ProgressMeter
+    using XAM
     
-    using Gadfly
+    # using Gadfly
     using Cairo
     using DataFrames
     using CSV
@@ -134,15 +137,21 @@ function normal_pipeline(
         temp_bed = Genomic.new_bed(readline(r)) #, chromosomes=chromosomes)
         push!(beds, temp_bed)
         update!(p, position(r))
+
+        # if length(beds) >= 500
+        #     break
+        # end
     end
     close(r)
 
     info(logger, string("The number of utrs: ", length(beds)))
 
     info(logger, "check index")
-    bai = string(bam, ".bai")
-    if !exists(Path(bai))
-        run(`samtools index $bam`)
+    for b = bam
+        bai = string(b, ".bai")
+        if !exists(Path(bai))
+            run(`samtools index $b`)
+        end
     end
     
     info(logger, "start running")
@@ -151,9 +160,7 @@ function normal_pipeline(
         rm(error_log)
     end
     
-    w = open(output, "w+")
-    write(w, "utr\tst_arr\ten_arr\tws\talpha_arr\tbeta_arr\tlb_arr\tlabel\tbic\n")
-    @showprogress "Computing... " pmap(beds) do b
+    res = @showprogress "Computing... " pmap(beds) do b
         data = Extract.get_record_from_bam(
             bam, b, 
             min_reads=min_reads, 
@@ -169,9 +176,15 @@ function normal_pipeline(
                 single_end_mode = single_end, cage_mode=cage_mode,
                 using_R = using_R, error_log = error_log, seed=seed
             )
-            if r != ""
-                write(w, string(r, "\n"))
-            end
+            return r
+        end
+        return ""
+    end
+    w = open(output, "w+")
+    write(w, "utr\tws\tst_arr\ten_arr\tats_site\tlabel\tbic\n")
+    @showprogress 1 "Writing..." for r = res
+        if r != ""
+            write(w, string(r, "\n"))
         end
     end
     close(w)
@@ -190,8 +203,7 @@ function identify_pipeline(
 )
     gtf = Genomic.load_GTF(input_file)
 
-    w = open(output, "w+")
-    @showprogress "Computing... " pmap(collect(keys(gtf["gene"]))) do g_name
+    res = @showprogress "Computing... " pmap(collect(keys(gtf["gene"]))) do g_name
         for t_name = gtf["gene"][g_name]
             transcript = gtf["transcript"][t_name]
             data = Extract.get_record_from_bam_transcript(
@@ -218,12 +230,15 @@ function identify_pipeline(
                     debug = false
                 )
     
-                if r != ""
-                    write(w, "gene_id\ttranscript_id\tutr\tst_arr\ten_arr\tws\talpha_arr\tbeta_arr\tlb_arr\tlabel\tbic\n")
-                    write(w, string(g_name, "\t", t_name, "\t", r, "\n"))
-                end
+                return r
             end
+            return ""
         end
+    end
+    w = open(output, "w+")
+    write(w, "gene_id\ttranscript_id\tutr\tst_arr\ten_arr\tws\talpha_arr\tbeta_arr\tlb_arr\tlabel\tbic\n")
+    for r = res
+        write(w, string(g_name, "\t", t_name, "\t", r, "\n"))
     end
     close(w)
 end
@@ -366,6 +381,39 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
     fixed_inference::Bool=false, single_end::Bool=false,
     min_reads::Int=0)
 
+    function generate_intron(sites, exon_coord, exon_range)
+        relative_range = [exon_coord[x] for x = exon_range]
+
+        split_sites = []
+   
+        for j = 1:2:length(exon_range)
+            if relative_range[j] <= sites[1] < sites[2] <= relative_range[j + 1]
+                push!(split_sites, exon_range[j] + sites[1] - relative_range[j])
+                push!(split_sites, exon_range[j] + sites[2] - relative_range[j])
+            elseif relative_range[j] <= sites[1] <= relative_range[j + 1] < sites[2]
+                push!(split_sites, exon_range[j] + sites[1] - relative_range[j])
+                push!(split_sites, exon_range[j + 1])
+            elseif sites[1] < relative_range[j] <= sites[2] <= relative_range[j + 1]
+                push!(split_sites, exon_range[j])
+                push!(split_sites, exon_range[j] + sites[2] - relative_range[j])
+            end
+
+
+            if relative_range[j] <= sites[3] < sites[4] <= relative_range[j + 1]
+                push!(split_sites, exon_range[j] + sites[3] - relative_range[j])
+                push!(split_sites, exon_range[j] + sites[4] - relative_range[j])
+            elseif relative_range[j] <= sites[3] <= relative_range[j + 1] < sites[4]
+                push!(split_sites, exon_range[j] + sites[1] - relative_range[j])
+                push!(split_sites, exon_range[j + 1])
+            elseif sites[3] < relative_range[j] <= sites[4] <= relative_range[j + 1]
+                push!(split_sites, exon_range[j])
+                push!(split_sites, exon_range[j] + sites[4] - relative_range[j])
+            end
+        end
+ 
+        return split_sites
+    end
+
     function convert_absolute_relative(exon_coord::Dict, exon_range::Vector, sites::Vector, is_reads_junc::Bool; is_read2::Bool = false)::Vector
         site_relative = []
         if is_reads_junc
@@ -404,16 +452,86 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
     for seed = 1:1
         gtf = Genomic.load_GTF(joinpath(@__DIR__, "..", string("tests/", seed, ".gtf")))
 
-        for (t_name, transcript) = gtf["transcript"]
+        real_sites = Vector()
+        junc_sites = Vector()
 
-            utr = transcript.Start
+        #=
+        t_name = "T1"
+        exons = gtf["exon"][t_name]
+        # convert genomic site of exons to relative pos in transcript
+        exon_coord = Dict{Int, Int}()
+        exon_range = Vector()
+        for e = exons
+            for i = e.Start:e.End
+                exon_coord[i] = exons[1].Start + length(exon_coord) + 1 - gtf["transcript"][t_name].Start
+            end
+            append!(exon_range, [e.Start, e.End])
+        end
+        println(exon_range)
+        println([exon_coord[x] for x = exon_range])
+
+        is_read1_junc = true # || line[6] == "TRUE"
+        is_read2_junc = false
+
+        line = [3002, 3141, 4391, 4537]
+        # println(line)
+        r1_site = [line[1], line[2]]
+        r2_site = [line[3], line[4]]
+
+        site_relative = [
+            convert_absolute_relative(exon_coord, exon_range, r1_site, is_read1_junc, is_read2 = false)...,
+            convert_absolute_relative(exon_coord, exon_range, r2_site, is_read2_junc, is_read2 = true)...,
+        ]
+
+        println(site_relative)
+        println(generate_intron(site_relative, exon_coord, exon_range))
+        =#
+
+        open(joinpath(@__DIR__, "..", string("tests/sites_", seed, ".txt"))) do r
+            while !eof(r)
+                line = readline(r)
+                line = split(strip(line), ",")
+                
+                t_name = line[7]
+
+                exons = gtf["exon"][t_name]
+                # convert genomic site of exons to relative pos in transcript
+                exon_coord = Dict{Int, Int}()
+                exon_range = Vector()
+                for e = exons
+                    for i = e.Start:e.End
+                        exon_coord[i] = exons[1].Start + length(exon_coord) + 1 - gtf["transcript"][t_name].Start
+                    end
+                    append!(exon_range, [e.Start, e.End])
+                end
+
+                is_read1_junc = line[5] == "TRUE" # || line[6] == "TRUE"
+                is_read2_junc = line[6] == "TRUE"
+
+                line = parse.(Int, line[1:4])
+                # println(line)
+                r1_site = [line[1], line[2]]
+                r2_site = [line[3], line[4]]
+
+                site_relative = [
+                    convert_absolute_relative(exon_coord, exon_range, r1_site, is_read1_junc, is_read2 = false)...,
+                    convert_absolute_relative(exon_coord, exon_range, r2_site, is_read2_junc, is_read2 = true)...,
+                ]
+                append!(line, [is_read1_junc ? 1 : 0, is_read2_junc ? 1 : 0])
+                push!(real_sites, line)
+                push!(junc_sites, generate_intron(site_relative, exon_coord, exon_range))
+            end
+            close(r)
+        end
+
+        for (t_name, transcript) = gtf["transcript"]
             exons = gtf["exon"][t_name]
             # convert genomic site of exons to relative pos in transcript
             exon_coord = Dict{Int, Int}()
             exon_range = Vector()
             for e = exons
                 for i = e.Start:e.End
-                    exon_coord[i] = exons[1].Start + length(exon_coord) + 1 - utr
+                    exon_coord[i] = exons[1].Start + length(exon_coord) + 1 - gtf["transcript"][t_name].Start
                 end
                 append!(exon_range, [e.Start, e.End])
             end
@@ -437,125 +555,82 @@ function test1(mu_f::Int64=300, min_ws::Float64=0.01,
             # ]
             # println(site_relative)
 
-            open(joinpath(@__DIR__, "..", string("tests/sites_", seed, ".txt"))) do r
-                while !eof(r)
-                    line = readline(r)
-                    line = split(strip(line), ",")
+            for (sites, junc) = zip(real_sites, junc_sites)
+                debug_site = [
+                    # [2336, 2792],
+                    # [1934, 3947],
+                    # [2554, 3957],
+                    # [1952, 2723],
+                    # [2970, 4467],
+                    # [3002, 4537],
+                    # [2268, 4190],
+                    [2614, 4268]
+                ]
 
-                    # if line[7] != t_name
-                    #     continue
-                    # end
+                pass = false
+                failed_on_border = true
+                pass1 = false
+                pass2 = false
 
-                    is_read1_junc = line[5] == "TRUE" # || line[6] == "TRUE"
-                    is_read2_junc = line[6] == "TRUE"
-
-                    line = parse.(Int, line[1:4])
-                    # println(line)
-                    r1_site = [line[1], line[2]]
-                    r2_site = [line[3], line[4]]
-
-                    #=
-                    line = [2261,2357,4201,4295]
-                    r1_site = [2261, 2357]
-                    r2_site = [4201,4295]
-                    =#
-
-                    start_site, end_site = r1_site[1], r2_site[2]
-                    
-                    site_relative = [
-                        convert_absolute_relative(exon_coord, exon_range, r1_site, is_read1_junc, is_read2 = false)...,
-                        convert_absolute_relative(exon_coord, exon_range, r2_site, is_read2_junc, is_read2 = true)...,
-                    ]
-
-                    debug_site = [
-                        # [2336, 2792],
-                        # [1934, 3947],
-                        # [2554, 3957],
-                        # [1952, 2723],
-                        # [2970, 4467],
-                        # [3002, 4537],
-                        # [2268, 4190],
-                        [3002,4537]
-                    ]
-
-                    if !any(isnan.(site_relative))
-                        pass = false
-                        failed_on_border = true
-                        pass1 = false
-                        pass2 = false
-
-                        # println(junc_sites)
-                        relative_exons = [exon_coord[x] for x = exon_range]
-                        if site_relative[2] in relative_exons || site_relative[3] in relative_exons
-                            failed_on_border = abs(site_relative[3] - site_relative[2]) <= 1
-                        else
-                            failed_on_border = false
-                        end
-                        
-                        
-                        for j = 1:2:length(relative_exons)
-                            if is_read1_junc
-                                if relative_exons[j] <= site_relative[1] <= relative_exons[j + 1] < site_relative[2]
-                                    pass1 = true
-                                end
-                            elseif relative_exons[j] <= site_relative[1] < site_relative[2] <= relative_exons[j + 1]
-                                pass1 = true
-                            end
-
-                            if is_read2_junc
-                                if site_relative[3] < relative_exons[j] <= site_relative[4] <= relative_exons[j + 1]
-                                    pass2 = true
-                                end
-                            elseif relative_exons[j] <= site_relative[3] < site_relative[4] <= relative_exons[j + 1]
-                                pass2 = true
-                            end
-                            
-                            if pass1 && pass2
-                                break
-                            end
-                        end
-
-                        
-                        pass = pass1 && pass2 && !failed_on_border
-                        
-                        # if r1_site[1] == 2257 && r2_site[2] == 4045 || r1_site[1] == 2083 && r2_site[2] == 4050 || r1_site[1] == 2239 && r2_site[2] == 4361
-                        if any([r1_site[1] == x[1] && r2_site[2] == x[2] for x = debug_site])
-                            println(string(t_name, ": ", is_read1_junc, "-", is_read2_junc, "; pass = ", pass, "; sites: ", site_relative))
-                            println(string("r1: ", r1_site, "; r2: ", r2_site))
-                            println(string("!(is_read1_junc || is_read2_junc) = ", !(is_read1_junc || is_read2_junc), " all(site_relative .> 0) == ", all(site_relative .> 0)))
-                            println(string("exon_range: ", exon_range, "; relative range: ",[exon_coord[x] for x = exon_range]))
-                        end
-
-                        if !(is_read1_junc || is_read2_junc) || pass
-                            push!(st_arr, site_relative[1])
-                            push!(en_arr, site_relative[4])
-                            
-                            push!(r1_st, r1_site[1])
-                            push!(r1_en, r1_site[2])
-                            push!(r2_st, r2_site[1])
-                            push!(r2_en, r2_site[2])
-                            continue
-                        end
-                    else
-                        if any([r1_site[1] == x[1] && r2_site[2] == x[2] for x = debug_site])
-                            println(string(t_name, ": ", is_read1_junc, "-", is_read2_junc, "; sites: ", site_relative))
-                            println(string("r1: ", r1_site, "; r2: ", r2_site))
-                            println(string("!(is_read1_junc || is_read2_junc) = ", !(is_read1_junc || is_read2_junc), " all(site_relative .> 0) == ", all(site_relative .> 0)))
-                            println(string("exon_range: ", [exon_coord[x] for x = exon_range]))
-                        end
-                    end
-    
-                    push!(st_arr, 0)
-                    push!(en_arr, 0)
-
-                    push!(r1_st, r1_site[1])
-                    push!(r1_en, r1_site[2])
-                    push!(r2_st, r2_site[1])
-                    push!(r2_en, r2_site[2])
-
-                    push!(relative, join(map(string, site_relative), "|"))
+                # println(junc_sites)
+                relative_exons = [exon_coord[x] for x = exon_range]
+                if site_relative[2] in relative_exons || site_relative[3] in relative_exons
+                    failed_on_border = abs(site_relative[3] - site_relative[2]) <= 1
+                else
+                    failed_on_border = false
                 end
-                close(r)
+                
+                
+                for j = 1:2:length(relative_exons)
+                    if is_read1_junc
+                        if relative_exons[j] <= site_relative[1] <= relative_exons[j + 1] < site_relative[2]
+                            pass1 = true
+                        end
+                    elseif relative_exons[j] <= site_relative[1] < site_relative[2] <= relative_exons[j + 1]
+                        pass1 = true
+                    end
+
+                    if is_read2_junc
+                        if site_relative[3] < relative_exons[j] <= site_relative[4] <= relative_exons[j + 1]
+                            pass2 = true
+                        end
+                    elseif relative_exons[j] <= site_relative[3] < site_relative[4] <= relative_exons[j + 1]
+                        pass2 = true
+                    end
+                    
+                    if pass1 && pass2
+                        break
+                    end
+                end
+
+                
+                pass = pass1 && pass2 && !failed_on_border
+
+                # println(sites)
+                relative = [
+                    convert_absolute_relative(exon_coord, exon_range, sites[1:2], sites[5] == 1, is_read2 = false)...,
+                    convert_absolute_relative(exon_coord, exon_range, sites[3:4], sites[6] == 1, is_read2 = true)...
+                ]
+
+                if any([sites[1] == x[1] && sites[4] == x[2] for x = debug_site])
+                    println(t_name)
+                    println(sites)
+                    println(relative)
+                    println(junc)
+                    println([haskey(exon_coord, x) for x = junc])
+                end
+
+                if !any(isnan.(relative)) && all([haskey(exon_coord, x) for x = junc])
+                    push!(st_arr, get(exon_coord, sites[1], 0))
+                    push!(en_arr, get(exon_coord, sites[4], 0))
+
+                    push!(r1_st, sites[1])
+                    push!(r1_en, sites[2])
+                    push!(r2_st, sites[3])
+                    push!(r2_en, sites[4])
+
+                    # push!(relative, join(map(string, site_relative), "|"))
+                end
             end
 
             df = DataFrame(st_arr = st_arr, en_arr = en_arr, r1_st = r1_st, r1_en = r1_en, r2_st = r2_st, r2_en = r2_en)
