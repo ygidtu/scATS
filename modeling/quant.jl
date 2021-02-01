@@ -99,10 +99,9 @@ end
     end
 
     function count_reads(bam::String, region::Genomic.BED, barcodes::Vector{String})::Dict{String, Int}
-        res = Dict(x => Dict() for x = barcodes)
+        res = Dict() 
 
         reader = open(BAM.Reader, bam, index=string(bam, ".bai"))
-
         for record in eachoverlap(reader, region.Chrom, region.Start:region.End)
             if !filter(record)
                 continue
@@ -121,9 +120,14 @@ end
             if !haskey(res, cb)
                 res[cb] = Dict()
             end
-
-            res[cb][ub] = 1
+ 
+            res[cb][ub] = get(res[cb], ub, 0) + 1
         end
+
+        # key = collect(keys(res))
+        # for k = key[1:5]
+        #     println(string("key: ", k, " ", res[k]))
+        # end
 
         return Dict(x => length(y) for (x, y) = res)
     end
@@ -170,17 +174,21 @@ function load_bed(input_file::String)
                     for x = alpha
                         if x != ""
                             s = round(Int, parse(Float64, x))
-
-                            push!(beds, Genomic.BED(chrom, s, s + 1, line[1], string(length(beds) + 1), strand))
+                            
+                            if strand == "+"
+                                push!(beds, Genomic.BED(chrom, s, s + 1, line[1], string(length(beds) + 1), strand))
+                            else
+                                push!(beds, Genomic.BED(chrom, s - 1, s, line[1], string(length(beds) + 1), strand))
+                            end
                         end
                     end
                 catch e
                 end
             end
 
-            if length(beds) > 500
-                break
-            end
+            # if length(beds) >= 5
+            #     break
+            # end
 
             update!(p, position(r))
         end
@@ -198,7 +206,7 @@ function main(input_file::String, cellranger::String, output::String)
     barcodes = Vector{String}()
     barcode = joinpath(cellranger, "filtered_feature_bc_matrix/barcodes.tsv.gz")
     for line in eachline(open(barcode) |> ZlibInflateInputStream)
-        push!(barcodes, replace(line, "-1"=>""))
+        push!(barcodes, line)
     end
 
     bam = joinpath(cellranger, "possorted_genome_bam.bam")
@@ -206,9 +214,9 @@ function main(input_file::String, cellranger::String, output::String)
     res = @showprogress 1 "Counting..." pmap(beds) do b
         res = count_reads(bam,  b, barcodes)
 
-        row = [string(b)]
+        row = [Genomic.get_bed_short(b)]
         for barcode = barcodes
-            push!(row, string(res[barcode]))
+            push!(row, string(get(res, barcode, get(res, replace(barcode, "-1"=> ""), 0))))
         end
 
         return row
@@ -224,7 +232,7 @@ function main(input_file::String, cellranger::String, output::String)
         error(logger, Formatting.format(FormatExpr("Error while create {}: {}"), output, e))
         exit(1)
     end
-
+    output = string(output)
     open(output, "w+") do w
 
         stream = nothing
@@ -233,13 +241,13 @@ function main(input_file::String, cellranger::String, output::String)
             stream = ZlibDeflateOutputStream(w)
         end
 
-        write(isnothing(stream) ? w : stream, string(",", ",".join(barcodes), "\n"))
+        write(isnothing(stream) ? w : stream, string(",", join(barcodes, ","), "\n"))
 
         for row = res
-            write(isnothing(stream) ? w : stream, string(",".join(row), "\n"))
+            write(isnothing(stream) ? w : stream, string(join(row, ","), "\n"))
         end
 
-        if !isnothing(w)
+        if !isnothing(stream)
             close(stream)
         end
 

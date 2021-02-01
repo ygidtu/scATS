@@ -3,6 +3,7 @@ import Base.isless
 
 module Genomic
     using BSON
+    using Formatting
     using Parameters
     using ProgressMeter
     using OrderedCollections
@@ -72,7 +73,7 @@ module Genomic
     function get_bed_short(self::BED)::String
         return Formatting.format(
             FormatExpr("{}:{}-{}:{}"),
-            self.chrom, self.start_pos, self.end_pos, self.strand
+            self.Chrom, self.Start, self.End, self.Strand
         )
     end
 
