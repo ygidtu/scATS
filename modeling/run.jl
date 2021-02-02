@@ -2,21 +2,10 @@
 
 using ArgParse
 using BSON
-using Memento    
-# using BGZFStreams
-# using BioAlignments
+using Distributed
+using Memento
 using FilePathsBase
 using ProgressMeter
-# using XAM
-
-# using Gadfly
-# using Cairo
-# using DataFrames
-# using CSV
-
-include(joinpath(@__DIR__, "src", "ATS.jl"))
-include(joinpath(@__DIR__, "src", "extract.jl"))
-include(joinpath(@__DIR__, "src", "genomic.jl"))
 
 
 function parse_commandline()
@@ -32,8 +21,9 @@ function parse_commandline()
             arg_type = String
             required = true
         "--using-R"
-            help="whether to use R ksmooth"
-            action = :store_true
+            help="How many process to use for R kernel, slow but more ATS sites. -1 means do not use R"
+            arg_type = Int
+            default = -1
         "--threads", "-t"
             help = "How many threads to use"
             arg_type = Int64
@@ -71,7 +61,7 @@ function parse_commandline()
             arg_type = Int64
             default = 5
         "--chunk"
-            help = "chunk size for multi threading, small memory with small chunk"
+            help = "chunk size for multi threading, reduce memory usage."
             arg_type = Int64
             default = 1000
         "--expand"
@@ -113,6 +103,52 @@ if args["verbose"]
     logger = Memento.config!("debug"; fmt="[{date} - {level} | {name}]: {msg} | {stacktrace}")
 end
 
+if args["using-R"] > 1
+    addprocs(args["using-R"])
+end
+
+@everywhere begin
+    using BGZFStreams
+    using BioAlignments
+    using FilePathsBase
+    using ProgressMeter
+    using XAM
+    
+    include(joinpath(@__DIR__, "src", "ATS.jl"))
+    include(joinpath(@__DIR__, "src", "extract.jl"))
+    include(joinpath(@__DIR__, "src", "genomic.jl"))
+
+    function fit(
+        b, bam::Vector;
+        mu_f::Int64=300, min_ws::Float64=0.01,
+        max_beta::Float64=50.0, sigma_f::Int64=50,
+        n_max_ats::Int=5, n_min_ats::Int=1,
+        fixed_inference::Bool=false, single_end::Bool=false,
+        min_reads::Int=0, cage_mode::Bool = false,
+        using_R::Bool=true, seed::Int=42,
+        error_log::String = ""
+    )
+        data = Extract.get_record_from_bam(
+            bam, b, 
+            min_reads=min_reads, 
+            cage_mode=cage_mode, 
+            single_end_mode=single_end
+        )
+    
+        if !isnothing(data)
+            r = ATSMIX.fit(
+                data.utr, n_max_ats, n_min_ats, data.st_arr, data.en_arr,
+                mu_f = mu_f, sigma_f = sigma_f, min_ws = min_ws, 
+                max_beta = max_beta, fixed_inference_flag = fixed_inference,
+                single_end_mode = single_end, cage_mode=cage_mode,
+                using_R = using_R, error_log = error_log, seed=seed
+            )
+            return r
+        end
+        return ""
+    end    
+end
+
 
 
 function normal_pipeline(
@@ -122,7 +158,7 @@ function normal_pipeline(
     n_max_ats::Int=5, n_min_ats::Int=1,
     fixed_inference::Bool=false, single_end::Bool=false,
     min_reads::Int=0, cage_mode::Bool = false,
-    using_R::Bool=true, seed::Int=42,
+    using_R::Int=-1, seed::Int=42,
     chunk::Int = 1000
 )   
     info(logger, "Loading UTR")
@@ -138,16 +174,16 @@ function normal_pipeline(
             push!(beds, temp_bed)
             update!(p, position(r))
 
-            # if length(beds) >= 500
-            #     break
-            # end
+            if length(beds) >= 500
+                break
+            end
         end
         close(r)
     end
 
     info(logger, string("The number of UTRs: ", length(beds)))
 
-    info(logger, "check index")
+    info(logger, "check index of bam")
     for b = bam
         bai = string(b, ".bai")
         if !exists(Path(bai))
@@ -161,46 +197,62 @@ function normal_pipeline(
         rm(error_log)
     end
 
-    open(output, "w+") do w
-        header = ATSMIX.EMHeader()
+    header = ATSMIX.EMHeader()
+    if using_R > 0
+        res = @showprogress "Computing... " pmap(beds) do b
+            return fit(
+                b, bam, 
+                n_max_ats=n_max_ats, n_min_ats=n_min_ats,
+                mu_f = mu_f, sigma_f = sigma_f, min_ws = min_ws, 
+                max_beta = max_beta, fixed_inference = fixed_inference,
+                single_end = single_end, cage_mode=cage_mode,
+                using_R = using_R > 0, error_log = error_log, seed=seed,
+                min_reads=min_reads
+            )
+        end
+        w = open(output, "w+")
         write(w, string(join(header, "\t"), "\n"))
 
-        p = Progress(length(beds), 1, "Computing...")
+        @showprogress 1 "Writing..." for r = res
+            if r != ""
+                write(w, string(r, "\n"))
+            end
+        end
+        close(w)
+    else
+        open(output, "w+") do w
+            
+            write(w, string(join(header, "\t"), "\n"))
 
-        for i = 1:chunk:length(beds)
-            Threads.@threads for j = i:min(i + chunk - 1, length(beds))
-                b = beds[j]
-                data = Extract.get_record_from_bam(
-                    bam, b, 
-                    min_reads=min_reads, 
-                    cage_mode=cage_mode, 
-                    single_end_mode=single_end
-                )
+            p = Progress(length(beds), 1, "Computing...")
 
-                if !isnothing(data)
-                    r = ATSMIX.fit(
-                        data.utr, n_max_ats, n_min_ats, data.st_arr, data.en_arr,
+            for i = 1:chunk:length(beds)
+                Threads.@threads for j = i:min(i + chunk - 1, length(beds))
+                    r = fit(
+                        beds[j], bam, 
+                        n_max_ats=n_max_ats, n_min_ats=n_min_ats,
                         mu_f = mu_f, sigma_f = sigma_f, min_ws = min_ws, 
-                        max_beta = max_beta, fixed_inference_flag = fixed_inference,
-                        single_end_mode = single_end, cage_mode=cage_mode,
-                        using_R = using_R, error_log = error_log, seed=seed
+                        max_beta = max_beta, fixed_inference = fixed_inference,
+                        single_end = single_end, cage_mode=cage_mode,
+                        using_R = using_R > 0, error_log = error_log, seed=seed,
+                        min_reads=min_reads
                     )
-                    # return r
+
                     if r != ""
                         write(w, string(join([r[x] for x = header], "\t"), "\n"))
                     end
+
+                    r = nothing
+
+                    GC.safepoint()
+                    next!(p)
                 end
-
-                b = nothing
-                r = nothing
-                data = nothing
-
-                GC.safepoint()
-                next!(p)
+                if i > chunk
+                    Base.GC.gc()
+                end
             end
-            Base.GC.gc()
+            close(w)
         end
-        close(w)
     end
 end
 
@@ -262,7 +314,7 @@ function main(
     input_file::String, bam::Vector, output::String;
     mu_f::Int64=300, min_ws::Float64=0.01,
     max_beta::Float64=50.0, sigma_f::Int64=50,
-    using_R::Bool=true, chunk::Int=1000,
+    using_R::Int=-1, chunk::Int=1000,
     n_max_ats::Int=5, n_min_ats::Int=1,
     fixed_inference::Bool=false, single_end::Bool=false,
     min_reads::Int=0, cage_mode::Bool = false,
@@ -280,6 +332,10 @@ function main(
         exit(1)
     end
 
+    if using_R == 0
+        using_R = 1
+    end
+
     if identify
         if debug
             return test1()
@@ -288,7 +344,7 @@ function main(
             input_file, bam, output, 
             mu_f=mu_f, min_ws=min_ws,
             max_beta=max_beta, sigma_f=sigma_f,
-            using_R=using_R,
+            using_R=using_R > 0,
             n_max_ats=n_max_ats, n_min_ats=n_min_ats,
             fixed_inference=fixed_inference, single_end=single_end,
             min_reads=min_reads, cage_mode=cage_mode,
