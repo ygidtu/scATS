@@ -4,13 +4,15 @@ module ATSMIX
     using Formatting
     using KernelDensity
     using Memento
+    using OrderedCollections
     using Parameters
     using Random
     using RCall
     using Statistics
     using StatsBase
 
-    using Memento
+    include(joinpath(@__DIR__, "genomic.jl"))
+
     using Compat: @__MODULE__  # requires a minimum of Compat 0.26. Not required on Julia 0.7
 
     # Create our module level LOGGER (this will get precompiled)
@@ -26,7 +28,7 @@ module ATSMIX
 
     Number = Union{Int64, Float64, Int}
 
-    export emptyData, fit, fit_by_R, setLevel
+    export emptyData, fit, fit_by_R, setLevel, EMHeader
 
     function setLevel(level::String)
         setlevel!(LOGGER, level)
@@ -89,38 +91,45 @@ module ATSMIX
         ws::Union{AbstractArray, Nothing} = nothing
         alpha_arr::Union{Vector, Nothing} = nothing
         beta_arr::Union{Vector, Nothing} = nothing
-        absolute_arr::Union{Vector, Nothing} = nothing
+        ats_arr::Union{Vector, Nothing} = nothing
         lb_arr::Union{Vector, Nothing} = nothing
         bic::Union{Number, Nothing} = NaN
         label = nothing
         fragment_size::String = "normal"
     end
 
-    Base.show(io::IO, self::EMData) = begin
-        res = Vector{String}()
-        for i in [self.ws, self.alpha_arr, self.beta_arr, self.absolute_arr]
-            if isnothing(i)
-                i = "NA"
+    function toDict(self::EMData)::OrderedDict
+        res = OrderedDict(
+            "ws" => ".",
+            "alpha_arr" => ".",
+            "beta_arr" => ".",
+            "ats_arr" => ".",
+        )
+
+        for i = keys(res)
+            j =  getfield(self, Symbol(i))
+            if isnothing(j)
+                j = "NA"
             else
-                i = join(map(string, i), ",")
+                j = join(map(string, j), ",")
             end
 
-            if i == ""
-                i = "."
+            if j == ""
+                continue
             end
-
-            push!(res, i)
+            res[i] = j
         end
 
-        push!(res, self.fragment_size)
+        res["fragment_size"] = self.fragment_size
+        res["bic"] = isnothing(self.bic) ? "NA" : string(self.bic)
 
-        if isnothing(self.bic)
-            push!(res, "NA")
-        else
-            push!(res, string(self.bic))
-        end
+        return res
+    end
 
-        print(io, join(res, "\t"))
+    function EMHeader()::Vector{String}
+        temp = toDict(emptyData())
+        key = collect(keys(temp))
+        return ["utr", key...]
     end
 
     function emptyData()::EMData
@@ -895,7 +904,7 @@ module ATSMIX
         exon_coord::Union{Dict{Int, Int}, Nothing} = nothing,
         error_log = nothing,
         debug = false
-    )::Union{String, EMData}
+    )::Union{OrderedDict, EMData}
 
         if !cage_mode && !single_end_mode && length(st_arr) == length(en_arr)
             len_arr = abs.([y - x + 1 for (x, y) = zip(st_arr, en_arr)])
@@ -944,20 +953,20 @@ module ATSMIX
             return ""
         end
 
-        res.absolute_arr = []
+        res.ats_arr = []
         if !isnothing(exon_coord) && !isnothing(res.alpha_arr)
             exon_coord = Dict(abs(y) =>x for (x, y) = exon_coord)
 
             for i = res.alpha_arr
                 if haskey(exon_coord, i)
-                    push!(res.absolute_arr, exon_coord[i])
+                    push!(res.ats_arr, exon_coord[i])
                 else
-                    push!(res.absolute_arr, utr.Strand == "+" ? utr.Start + abs(i) : utr.End - abs(i))
+                    push!(res.ats_arr, utr.Strand == "+" ? utr.Start + abs(i) : utr.End - abs(i))
                 end
             end
         elseif !isnothing(res.alpha_arr)
             for i = res.alpha_arr
-                push!(res.absolute_arr, utr.Strand == "+" ? utr.Start + abs(i) : utr.End - abs(i))
+                push!(res.ats_arr, utr.Strand == "+" ? utr.Start + abs(i) : utr.End - abs(i))
             end
         end
 
@@ -965,14 +974,8 @@ module ATSMIX
             return res
         end
 
-        return Formatting.format(
-            FormatExpr("{}:{}-{}:{}\t{}"),  # {}\t{}\t
-            utr.Chrom, utr.Start, utr.End, utr.Strand,
-            # join(map(string, st_arr), ","),
-            # join(map(string, en_arr), ","),
-            # join(map(string, data.real_st), ","),
-            # join(map(string, data.real_en), ","),
-            string(res)
-        )
+        res = toDict(res)
+        res["utr"] = Genomic.get_bed_short(utr)
+        return res        
     end
 end

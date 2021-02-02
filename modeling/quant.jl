@@ -113,15 +113,18 @@ end
             if strand != region.Strand
                 continue
             end
-            auxdata = Dict(BAM.auxdata(record))
-            cb = auxdata["CB"]
-            ub = auxdata["UB"]
 
-            if !haskey(res, cb)
-                res[cb] = Dict()
+            if BAM.leftposition(record) < region.End && BAM.rightposition(record) > region.Start
+                auxdata = Dict(BAM.auxdata(record))
+                cb = auxdata["CB"]
+                ub = auxdata["UB"]
+
+                if !haskey(res, cb)
+                    res[cb] = Dict()
+                end
+    
+                res[cb][ub] = get(res[cb], ub, 0) + 1
             end
- 
-            res[cb][ub] = get(res[cb], ub, 0) + 1
         end
 
         # key = collect(keys(res))

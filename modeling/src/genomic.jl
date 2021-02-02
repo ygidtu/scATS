@@ -70,7 +70,7 @@ module Genomic
         end
     end
 
-    function get_bed_short(self::BED)::String
+    function get_bed_short(self)::String
         return Formatting.format(
             FormatExpr("{}:{}-{}:{}"),
             self.Chrom, self.Start, self.End, self.Strand

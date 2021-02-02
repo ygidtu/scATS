@@ -33,6 +33,8 @@ optional arguments:
 
 ### 2. infer ATS
 
+Support multi-threading, please set the number of threads to use by `julia -t n` or `export JULIA_NUM_THREADS=n`
+
 ```bash
 > julia run.jl --help
 usage: run.jl -i INPUT -b BAM -o OUTPUT [-d DISTANCE] [--using-R]
@@ -50,9 +52,6 @@ optional arguments:
                         The minimum distance of read in utr. (type:
                         Int64, default: 1500)
   --using-R             whether to use R version of model
-  -p, --process PROCESS
-                        How many processes to use (type: Int64,
-                        default: 1)
   --n-max-ats N-MAX-ATS
                         the maximum of ats inside a utr (type: Int64,
                         default: 5)
