@@ -134,7 +134,7 @@ end
             cage_mode=cage_mode, 
             single_end_mode=single_end
         )
-    
+
         if !isnothing(data)
             r = ATSMIX.fit(
                 data.utr, n_max_ats, n_min_ats, data.st_arr, data.en_arr,
@@ -171,12 +171,15 @@ function normal_pipeline(
         # next!(p)
         while !eof(r)
             temp_bed = Genomic.new_bed(readline(r)) #, chromosomes=chromosomes)
+
+            # if temp_bed.Chrom == "1"
             push!(beds, temp_bed)
+            # end
             update!(p, position(r))
 
-            if length(beds) >= 500
-                break
-            end
+            # if length(beds) >= 500
+            #     break
+            # end
         end
         close(r)
     end
@@ -215,7 +218,7 @@ function normal_pipeline(
 
         @showprogress 1 "Writing..." for r = res
             if r != ""
-                write(w, string(r, "\n"))
+                write(w, string(join([r[x] for x = header], "\t"), "\n"))
             end
         end
         close(w)

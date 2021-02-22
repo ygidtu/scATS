@@ -51,7 +51,7 @@ module Genomic
         
         if length(lines) >= 6
             return BED(
-                replace(lines[1], "chr"=>""), parse(Int64, lines[2]), parse(Int64, lines[3]),
+                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),  # replace(lines[1], "chr"=>"")
                 lines[4], strip(lines[5]), lines[6]
             )
         elseif length(lines) == 3
@@ -166,17 +166,13 @@ module Genomic
                     continue
                 end
 
-                if length(data["gene"]) > 500
-                    break
-                end
-
                 gtf = Genomic.create_GTF(line)
 
                 if gtf.Type == "transcript"
                     # if there is not gene_biotype or gene_biotype is not specific types passed
-                    if !haskey(gtf.Attributes, "gene_biotype") || !(gtf.Attributes["gene_biotype"] in ["antisense", "lincRNA", "protein_coding"])
-                        continue
-                    end
+                    # if !haskey(gtf.Attributes, "gene_biotype") || !(gtf.Attributes["gene_biotype"] in ["antisense", "lincRNA", "protein_coding"])
+                    #     continue
+                    # end
 
                     if !haskey(data["gene"], gtf.GeneID)
                         data["gene"][gtf.GeneID] = Vector()

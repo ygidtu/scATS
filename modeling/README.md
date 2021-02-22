@@ -33,7 +33,9 @@ optional arguments:
 
 ### 2. infer ATS
 
-Support multi-threading, please set the number of threads to use by `julia -t n` or `export JULIA_NUM_THREADS=n`
+- default julia kernel support multi-threading, please set the number of threads to use by `julia -t n` or `export JULIA_NUM_THREADS=n`
+
+- `--using-R` is conflist with Theads, therefore pleas using `--using-R n` to enable  multi processing to process data
 
 ```bash
 > julia run.jl --help

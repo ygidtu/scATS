@@ -105,6 +105,7 @@ module Extract
     function determine_strand(record)::String
         strand = "*"
         flag = BAM.flag(record)
+
         if flag & SAM.FLAG_READ1 > 0
             if flag & SAM.FLAG_REVERSE > 0
                 strand = "-"
@@ -117,6 +118,8 @@ module Extract
             else
                 strand = "-"
             end
+        else
+            strand = flag & SAM.FLAG_REVERSE > 0 ? "-" : "+"
         end
         return strand
     end
@@ -159,11 +162,11 @@ module Extract
             reader = open(BAM.Reader, p, index=bai)
 
             for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
-                if !filter(record)
-                    continue
-                end
+                # if !filter(record)
+                #     continue
+                # end
 
-                if BAM.flag(record) & SAM.FLAG_PROPER_PAIR == 0
+                if !single_end_mode && BAM.flag(record) & SAM.FLAG_PROPER_PAIR == 0
                     continue
                 end
                 
@@ -172,16 +175,15 @@ module Extract
                 end
                 
                 # Only kept R2
-                if BAM.flag(record) & SAM.FLAG_READ1 > 0
+                if !single_end_mode && BAM.flag(record) & SAM.FLAG_READ1 > 0
                     r1[string(key, "|", BAM.tempname(record))] = record
                     continue
                 end
 
                 # R2 needs locate in UTR
-                if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
+                if !single_end_mode && (utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record))
                     continue
-                end
-
+                end        
                 # read strand
                 strand = determine_strand(record)
                 if strand != utr.Strand
@@ -197,13 +199,11 @@ module Extract
         for (name, site) = r2
             r1_pos = get(r1, name, nothing)
 
-            if isnothing(r1_pos)
-                continue
-            end
-
-            # R1 needs locate in UTR
-            if !single_end_mode && (utr.Start > BAM.leftposition(r1_pos) || utr.End < BAM.rightposition(r1_pos))
-                continue
+            if !single_end_mode && isnothing(r1_pos)
+                # R1 needs locate in UTR
+                if !single_end_mode && (utr.Start > BAM.leftposition(r1_pos) || utr.End < BAM.rightposition(r1_pos))
+                    continue
+                end
             end
 
             # R2 end site, for Rn
@@ -256,44 +256,49 @@ module Extract
         r1, r2 = Dict(), Dict()
 
         for p = path
-            key = basename(Path(p))
-            bai = string(p, ".bai")
- 
-            reader = open(BAM.Reader, p, index=bai)
-            sites = Dict{}
+            try
+                key = basename(Path(p))
+                bai = string(p, ".bai")
+    
+                reader = open(BAM.Reader, p, index=bai)
+                sites = Dict{}
 
-            utr_site = utr.Strand == "+" ? utr.Start : utr.End
-            for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
-                if !filter(record)
-                    continue
-                end
+                utr_site = utr.Strand == "+" ? utr.Start : utr.End
+                for record in eachoverlap(reader, utr.Chrom, utr.Start:utr.End)
+                    if !filter(record)
+                        continue
+                    end
 
-                # Only kept R1
-                if BAM.flag(record) & SAM.FLAG_READ2 > 0
-                    r2[string(key, "|", BAM.tempname(record))] = Dict(
+                    # Only kept R1
+                    if BAM.flag(record) & SAM.FLAG_READ2 > 0
+                        r2[string(key, "|", BAM.tempname(record))] = Dict(
+                            "start"=>BAM.leftposition(record), 
+                            "end"=>BAM.rightposition(record),
+                        )
+                        continue
+                    end
+
+                    if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
+                        continue
+                    end
+
+                    # read strand
+                    strand = determine_strand(record)
+
+                    if strand != utr.Strand
+                        continue
+                    end
+
+                    r1[string(key, "|", BAM.tempname(record))] = Dict(
                         "start"=>BAM.leftposition(record), 
                         "end"=>BAM.rightposition(record),
                     )
-                    continue
                 end
-
-                if utr.Start > BAM.leftposition(record) || utr.End < BAM.rightposition(record)
-                    continue
-                end
-
-                # read strand
-                strand = determine_strand(record)
-
-                if strand != utr.Strand
-                    continue
-                end
-
-                r1[string(key, "|", BAM.tempname(record))] = Dict(
-                    "start"=>BAM.leftposition(record), 
-                    "end"=>BAM.rightposition(record),
-                )
+                close(reader)
+            catch e
+                println(p)
+                println(e)
             end
-            close(reader)
         end
 
         utr_site = utr.Strand == "+" ? utr.Start : utr.End

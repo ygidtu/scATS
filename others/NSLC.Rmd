@@ -1,0 +1,553 @@
+---
+title: "NSLC"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r cars, include=FALSE}
+library(Seurat)
+library(ggplot2)
+library(ggrastr)
+library(ggrepel)
+library(ggpubr)
+library(openxlsx)
+library(stringr)
+library(dplyr)
+library(ComplexHeatmap)
+library(circlize)
+```
+
+
+```{r pressure, echo=FALSE}
+obj <- Read10X("/mnt/raid64/ATS/alignments/cellranger/hs/vdj_v1_hs_nsclc_5gex/outs/filtered_feature_bc_matrix/")
+
+obj <- CreateSeuratObject(obj)
+```
+
+
+
+```{R}
+obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r}
+obj = NormalizeData(obj)
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 2000)
+
+obj <- ScaleData(obj, features = row.names(obj))
+obj <- RunPCA(obj)
+
+ElbowPlot(obj)
+```
+
+```{R}
+n_pcs = 5
+obj <- FindNeighbors(obj, dims = 1:n_pcs)
+obj <- FindClusters(obj, resolution = .9) # seq(.5, .8, .1)
+obj <- RunUMAP(obj, dims = 1:5)
+```
+
+
+```{R fig.height=4, fig.width=5}
+DimPlot(obj)
+```
+
+
+```{R fig.height=18, fig.width=6}
+lung = read.xlsx("/mnt/raid64/LungCancer/10x/20190701_gene_markers.xlsx", 3)
+short_names <- c(
+    "APII"="AT2",
+    "Alveolar II"="AT2",
+    "Alveolar_II"="AT2",
+    "AT1"="AT1",
+    "Basal"="Basal",
+    "B cells"="B",
+    "CD4+"="CD4",
+    "CD4"="CD4",
+    "CD8+"="CD8",
+    "CD8"="CD8",
+    "Ciliated"="Cilia",
+    "Club"="Club",
+    "DC"="DC",
+    "Dendritic"="DC",
+    "Endothelial"="EC",
+    "Epithelial"="Epi",
+    "Exhaust T"="Exh T",
+    "Fibroblasts"="Fib",
+    "Granulocyte"="Gran",
+    "Mast"="Mast",
+    "Mascrophages"="Mφ",
+    "Macrophages"="Mφ",
+    "Monocytes"="Mo",
+    "Neuroendocrine"="NE",
+    "NK"="NK",
+    "Tregs"="Tregs"
+)
+
+short_names <- as.data.frame(short_names)
+
+markers = lung
+markers <- na.omit(markers[, 1:2])
+markers <- unique(markers)
+temp_markers = markers[order(markers$Cells, markers$Markers), ]
+temp_markers$Cells = short_names[temp_markers$Cells, 1]
+temp_markers <- na.omit(temp_markers)
+
+temp_markers$Cells[temp_markers$Cells == "Mo"] = "Mφ"
+temp_markers$Cells[temp_markers$Cells == "ATII"] = "AT2"
+temp_markers$Cells[temp_markers$Cells == "Epi"] = "AT1"
+
+data = DotPlot(obj, features = unique(as.character(temp_markers$Markers)), group.by = "RNA_snn_res.0.9")
+
+data = merge(data$data, temp_markers, by.x = "features.plot", by.y = "Markers")
+
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) + 
+    geom_point() +
+    facet_grid(Cells~., space = "free", scales = "free") +
+    theme_pubr() +
+    scale_color_gradient2(low = "grey75", high = "blue")
+```
+
+
+```{R fig.height=10, fig.width=6}
+cell_types = c(
+    "4"="Basal", "12"="Basal",
+    "2"="B", "3"="B", "14"="B",
+    "0"="CD4", "6"="CD4",
+    "1"="CD8", "8"="CD8",
+    "9"="AT2",
+    "5"="Mφ", "11"="Mφ", "10"="Mφ",
+    "13"="Mast",
+    "7"="Fib",
+    "15"="DC"
+)
+
+
+obj@meta.data$CellType = sapply(obj@meta.data$RNA_snn_res.0.9, function(x) {
+    x = as.character(x)
+    ifelse(x %in% names(cell_types), cell_types[[x]], x)
+})
+
+
+data = DotPlot(obj, features = unique(as.character(temp_markers$Markers)), group.by = "CellType")
+data = merge(data$data, temp_markers, by.x = "features.plot", by.y = "Markers")
+
+data = data[as.character(data$Cells) %in% cell_types, ]
+
+data$Cells = factor(data$CCells, levels = c("AT2", "Basal", "Fib", "B", "CD4", "CD8", "DC", "Mast", "Mφ"))
+
+p <- ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) + 
+    geom_point() +
+    facet_grid(Cells~., space = "free", scales = "free") +
+    theme_pubr() +
+    scale_color_gradient2(low = "grey75", high = "blue") +
+    theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1)) +
+    labs(x = "", y = "")
+
+ggsave(
+    filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/dotplot.pdf",
+    plot = p, width = 6, height = 10
+)
+```
+
+```{r fig.height=4, fig.width=4}
+obj <- RunPCA(obj, features = unique(c(temp_markers$Markers, VariableFeatures(obj))))
+
+ElbowPlot(obj)
+
+obj <- RunUMAP(obj, reduction.name = "celltype", dims = 1:5)
+
+DimPlot(obj, group.by = "CellType", label = T, reduction = "celltype") +
+    theme(legend.position = "none")
+```
+
+
+```{R}
+
+make_cell_types_plot3 <- function(
+    coord,
+    pt.size = 0.1, 
+    alpha = 0.8,
+    text_size = 10,
+    axis_size = 18,
+    axis_title_size = 20,
+    title_size = 25,
+    group_by = "",
+    label = "cell_name",
+    title = "Cell type",
+    legend.position = "none",
+    colors = NULL
+) {
+    data = coord[, c("UMAP_1", "UMAP_2", group_by, label)]
+    colnames(data) = c("UMAP1", "UMAP2", group_by, "Label")
+    label = "Label"
+    
+    if (group_by == "") {
+        group_by = "cell"
+    }
+    
+    p <- eval(
+        parse(text=paste0(
+                "ggplot(data = data, aes(x=UMAP1, y=UMAP2, color=", group_by, ", alpha=alpha))"
+            )
+        )
+    )
+    
+    if (!is.null(label)) {
+
+        text_loc = eval(
+            parse(text=paste0("data %>% group_by(", label, ") %>% mutate(x = median(UMAP1), y = median(UMAP2)) %>% dplyr::select(x, y, ", label, ")"))
+        )
+        
+        text_loc = text_loc %>% unique() %>% as.data.frame()
+        
+        # print(text_loc)
+    }
+    
+    p <- p + geom_point_rast(aes(alpha=alpha), size = pt.size)
+    
+    if (!is.null(label)) {
+        p <- p + eval(parse(text=paste0("geom_text_repel(data = text_loc,  aes(x=x, y=y, label = ", label, "), color = \"black\", size = text_size, alpha = 1)")))
+    }
+    
+    p <- p + 
+        theme_bw() +
+        labs(
+            title = title
+        ) +
+        theme(
+            plot.title = element_text(hjust = 0.5, face="bold", size = title_size),
+            legend.position = legend.position,
+            axis.text = element_text(size = axis_size),
+            axis.title = element_text(size = axis_title_size),
+            panel.grid = element_blank(),
+            aspect.ratio=1
+        )
+    
+    if (!is.null(colors)) {
+        p <- p + scale_color_manual(values = colors)
+    }
+    p
+}
+
+
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+umap$Cell = obj@meta.data[rownames(umap), "CellType"]
+
+
+p <- make_cell_types_plot3(umap, group_by = "Cell", label = "Cell", title = "", text_size = 5)
+
+ggsave(
+    filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/cell_type_umap.pdf",
+    plot = p, width = 5, height = 5
+)
+```
+
+
+
+## AUCell
+```{R}
+library(AUCell)
+
+cells_rankings <- AUCell_buildRankings(as.matrix(obj@assays$RNA@counts))
+
+geneSets = list()
+temp_markers[, 2] <- as.character(temp_markers[, 2])
+for(i in unique(temp_markers[, 2])) {
+    temp = temp_markers[temp_markers[,2] == i, ]
+
+    geneSets[[i]] = temp[, 1]
+}
+
+# geneSets <- GSEABase::GeneSet(genes, setName="geneSet1") # alternative
+cells_AUC <- AUCell_calcAUC(geneSets, cells_rankings, aucMaxRank=nrow(cells_rankings)*0.05)
+
+cells_assignment <- AUCell_exploreThresholds(cells_AUC, plotHist=TRUE, nCores=1, assign=TRUE)
+```
+
+```{R fig.height=4, fig.width=4}
+selectedThresholds <- getThresholdSelected(cells_assignment)
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+
+
+auc = t(as.data.frame(getAUC(cells_AUC)))
+
+plist = list()
+for(i in names(selectedThresholds)) {
+    if (!i %in% unique(obj@meta.data$CellType)) {
+        next
+    }
+    ## UMAP
+    data = as.data.frame(umap)
+    colnames(data) <- c("UMAP1", "UMAP2")
+    data$AUC <- auc[rownames(data), i]
+    
+    if (!i %in% c("AT2", "Fib")) {
+        data$AUC[data$AUC < selectedThresholds[i]] <- 0
+    }
+
+    # print(head(data))
+    # data = data[order(data$AUC, decreasing = F), ]
+    title = i
+
+    p <- ggplot(
+        data, aes(x=UMAP1, y=UMAP2, color=AUC, alpha = 0.5)
+    ) + geom_point_rast(size = 0.1) +
+        theme_pubr() +
+        theme(
+            plot.title = element_text(hjust = 0.5, face="bold", size = 20),
+            panel.grid = element_blank(),
+            legend.position = "none",
+            axis.text = element_text(size = 12),
+            axis.title = element_text(size = 15),
+            legend.text = element_text(size = 15),
+            legend.title = element_text(size = 15)
+        ) +
+        scale_color_gradient(low = "lightgrey", high = "blue") +
+        labs(title = paste0(title, " (AUC > ", round(selectedThresholds[i], 2), ")"))
+    
+    plist[[length(plist) + 1]] = p
+}
+
+
+ggsave(
+    filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/AUC.pdf",
+    plot = cowplot::plot_grid(plotlist = plist, nrow = 3),
+    width = 12, height = 12
+)
+
+saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/seurat_obj.rds")
+saveRDS(cells_rankings, "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/cells_rankings.rds")
+saveRDS(cells_assignment, "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/cells_assignment.rds")
+
+```
+
+
+## PSI
+```{r}
+data = data.table::fread("/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC.psi")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+
+
+meta = data.frame(
+    Cells = colnames(data),
+    CellType = obj@meta.data[colnames(data), "CellType"]
+)
+rownames(meta) = meta$Cells
+
+count = data.table::fread("/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC.quant")
+count = as.data.frame(count)
+rownames(count) <- count$V1
+count = count[, colnames(count) != "V1"]
+
+
+
+obj <- ICAS::ICASDataSetFromMatrix(
+  countData = count[as.character(sapply(rownames(data), function(x) { str_split(x, "\\|")[[1]][2] })), ],
+  colData = meta,
+  design = "CellType"
+)
+
+ICAS::psi(obj) <- as.matrix(data)
+
+
+markers = ICAS::FindAllMarkers(obj, logfc.threshold = 0, test.use = "tobit", group.by = "CellType")
+
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/markers_by_celltypes.rds")
+```
+
+
+
+```{r}
+hist(markers$p_val_adj)
+```
+
+```{r}
+set.seed(42)
+temp_meta = as.data.frame(obj@colData)
+    
+temp_meta = as.data.frame(temp_meta) %>%
+  group_by(CellType) %>%
+  sample_n(500, replace = T) %>%
+  unique() %>%
+  as.data.frame()
+
+pct_thred = .3
+
+temp = obj@psi[markers$gene[abs(markers$pct.2 - markers$pct.1) > pct_thred], as.character(temp_meta$Cells)]
+    
+h = Heatmap(
+  temp, name = "PSI",
+  cluster_rows = F,
+  cluster_columns = T,
+  show_row_names = F,
+  show_column_names = F,
+  column_split = temp_meta$CellType,
+  clustering_method_rows = "ward.D2",
+  col = colorRamp2(c(0, .5, 1), c("blue", "#EEEEEE", "red"), space = "RGB"),
+  use_raster = T
+)
+
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/markers_celltypes.pdf", width = 6, height = 5)
+draw(h)
+dev.off()
+```
+
+
+```{r}
+markers = NULL
+i = "AT2"
+j = "Basal"
+tryCatch({
+  temp = ICAS::FindMarkers(obj, ident.1 = i, ident.2 = j, test.use = "tobit", group.by = "CellType")
+  
+  if (nrow(temp) > 0) {
+    temp$comp = paste(i, j, sep = " - ")
+    temp$gene = rownames(temp)
+    markers = rbind(markers, temp)
+  }
+}, error = function(e) {
+  print(e)
+})
+```
+
+
+```{r}
+set.seed(42)
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/markers_AT2_basal.pdf", width = 6, height = 5)
+for (i in unique(markers$comp)) {
+  cells = str_split(i, " - ")[[1]]
+  
+  if (!cells[1] %in% unique(obj@colData$CellType)) {
+    temp_meta = obj@colData[obj@colData$Class %in% cells, ]
+    
+    temp_meta = as.data.frame(temp_meta) %>%
+      group_by(Class) %>%
+      sample_n(500, replace = T) %>%
+      unique() %>%
+      as.data.frame()
+    
+    temp = obj@psi[markers$gene[markers$comp == i & abs(markers$pct.2 - markers$pct.1) > pct_thred], as.character(temp_meta$Cells)]
+    
+    h = Heatmap(
+      temp, name = "PSI",
+      cluster_rows = F,
+      cluster_columns = T,
+      show_row_names = F,
+      show_column_names = F,
+      column_split = temp_meta$Class,
+      clustering_method_rows = "ward.D2",
+      col = colorRamp2(c(0, .5, 1), c("blue", "#EEEEEE", "red"), space = "RGB"),
+      use_raster = T
+    )
+    
+    draw(h)
+  } else {
+    temp_meta = obj@colData[obj@colData$CellType %in% cells, ]
+    
+    temp_meta = as.data.frame(temp_meta) %>%
+      group_by(CellType) %>%
+      sample_n(500, replace = T) %>%
+      unique() %>%
+      as.data.frame()
+    
+    temp = obj@psi[markers$gene[markers$comp == i & abs(markers$pct.2 - markers$pct.1) > pct_thred], as.character(temp_meta$Cells)]
+    
+    h = Heatmap(
+      temp, name = "PSI",
+      cluster_rows = F,
+      cluster_columns = T,
+      show_row_names = F,
+      show_column_names = F,
+      column_split = temp_meta$CellType,
+      clustering_method_rows = "ward.D2",
+      col = colorRamp2(c(0, .5, 1), c("blue", "#EEEEEE", "red"), space = "RGB"),
+      use_raster = T
+    )
+    
+    draw(h)
+  }
+}
+dev.off()
+
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/markers_by_celltypes_comp.rds")
+```
+
+
+```{R}
+so = CreateSeuratObject(
+  round(obj@psi),
+  meta.data = as.data.frame(obj@colData)
+)
+
+so = NormalizeData(so)
+so@assays$RNA@data = obj@psi
+rownames(so@assays$RNA@data) = rownames(so@assays$RNA@counts)
+so = FindVariableFeatures(so)
+so = ScaleData(so)
+so@assays$RNA@scale.data = obj@psi
+rownames(so@assays$RNA@scale.data) = rownames(so@assays$RNA@counts)
+so = RunPCA(so)
+```
+
+```{R}
+ElbowPlot(so)
+```
+
+
+```{R}
+so = RunUMAP(so, dims = 1:5)
+```
+
+
+```{R}
+DimPlot(so, reduction = "umap", group.by = "CellType")
+```
+```{R}
+umap = as.data.frame(so@reductions$umap@cell.embeddings)
+umap$Cell = so@meta.data[rownames(umap), "CellType"]
+
+
+p <- make_cell_types_plot3(umap, group_by = "Cell", label = "Cell", title = "", text_size = 5)
+
+p
+
+ggsave(
+    filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/cell_type_umap_psi.pdf",
+    plot = p, width = 5, height = 5
+)
+
+saveRDS(so, "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/seurat_obj_psi.rds")
+saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/ICAS_obj_psi.rds")
+```
+
+
+```{r}
+temp = obj@colData[obj@colData$CellType %in% c("AT2", "Basal"), ]
+
+
+temp$FCells = paste("NSLC", temp$Cells, sep = "_")
+
+write.table(
+  temp[, c("FCells", "CellType")], "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/celltype_bc.txt", 
+  quote = F, col.names = F, row.names = F, sep = "\t"
+)
+
+write.table(
+  data.frame(
+    cell = c("AT2", "Basal"), 
+    color = c(RColorBrewer::brewer.pal(11, "RdYlBu")[3], RColorBrewer::brewer.pal(11, "RdYlBu")[9])
+  ), 
+  "/mnt/raid64/ATS/Personal/zhangyiming/quant/NSLC/cellclass_order.txt", 
+  quote = F, col.names = F, row.names = T, sep = "\t"
+)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

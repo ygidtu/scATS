@@ -17,16 +17,24 @@ library(Matrix)
 library(trqwe)
 library(ggplot2)
 library(doMC)
+library(ComplexHeatmap)
+library(circlize)
+library(dplyr)
+library(ggrastr)
+library(ggrepel)
+library(ComplexHeatmap)
+library(circlize)
+library(ICAS)
 ```
 
 ## Including Plots
 
 ```{r pressure, echo=FALSE}
-fs = list.files("/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/", pattern = "csv.gz$", full.names = T)
+fs = list.files("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/", pattern = "psi$", full.names = T)
 
 data = NULL
 for (f in fs) {
-    key = str_replace_all(basename(f), ".csv.gz", "")
+    key = str_replace_all(basename(f), ".quant", "")
     
     if (str_detect(key, "bak")) {
         next
@@ -35,7 +43,7 @@ for (f in fs) {
     print(key)
     temp = fread(f)
     temp = as.data.frame(temp)
-    rownames(temp) <- temp$V1
+    rownames(temp) <- make.unique(temp$V1)
     temp = temp[, colnames(temp) != "V1"]
     
     colnames(temp) = paste(colnames(temp), key, sep = "_")
@@ -47,7 +55,7 @@ for (f in fs) {
     }
 }
 
-mcsaveRDS(data, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/raw_counts.rds")
+mcsaveRDS(data, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_psi.rds")
 ```
 
 
@@ -66,14 +74,53 @@ rownames(meta) <- meta$Cells
 sc_meta = readRDS("/mnt/raid64/Covid19_Gravida/rds/meta_rm_doublets.rds")
 
 meta$CellType = sc_meta[rownames(meta), "CellType"]
+meta = meta[!is.na(meta$CellType), ]
 
-saveRDS(meta, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/meta.rds")
+saveRDS(meta, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/meta.rds")
+
+
+library(dplyr)
+gene = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/overall_ATS_cage_R_gene")
+
+temp = gene %>%
+  group_by(V3) %>%
+  add_tally() %>%
+  as.data.frame()
+
+data = data[paste(temp$V3, temp$V2, sep = "|"), ]
+
 ```
 
 
 ```{r}
-data = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/raw_counts.rds")
+data = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_counts.rds")
+gene = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/overall_ATS_cage_R_gene")
 
+data = data[intersect(gene$V2, rownames(data)), ]
+
+mcsaveRDS(data, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_counts.rds")
+
+library(dplyr)
+library(progress)
+gene = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/overall_ATS_cage_R_gene")
+
+temp = gene %>%
+  group_by(V3) %>%
+  add_tally() %>%
+  as.data.frame()
+
+temp = temp[temp$n < 5 & temp$n > 1, ]
+
+data <- trqwe::mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_counts.rds")
+pb <- progress_bar$new(total = length(unique(gene$V3)))
+
+data = data[temp$V2, ]
+
+for (i in unique(gene$V3)) {
+  pb$tick()
+  ats = as.character(gene$V2[gene$V3 == i])
+  data[ats, ] = data[ats, ] / colSums(data[ats, ])
+}
 
 rs = rowSums(data, na.rm = T)
 cs = colSums(data, na.rm = T)
@@ -85,37 +132,248 @@ plot(density(cs))
 
 
 ```{r}
-data1 = Matrix(as.matrix(data[rs > 500, ]))
+# obj <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/seurat_obj.rds")
 
-meta = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/meta.rds")
+meta = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/meta.rds")
 
-data1[is.na(data1)] = 0
+colnames(data) <- str_replace_all(colnames(data), ".psi", "")
 
-meta = meta[!is.na(meta$CellType), ]
+obj <- CreateSeuratObject(
+  data[, rownames(meta)], 
+  meta.data = meta
+)
 
-obj <- CreateSeuratObject(data1[, rownames(meta)], meta.data = meta)
-
-# saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/seurat_obj.rds")
+mcsaveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/seurat_obj_psi.rds")
 ```
 
 
 ```{r}
 obj = NormalizeData(obj, normalization.method = "LogNormalize", scale.factor = 10000)
 obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 2000)
-obj <- ScaleData(obj, features = rownames(obj))
+obj <- ScaleData(obj, rownames(obj))
+
+mcsaveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/seurat_obj_5000.rds")
+
+Idents(obj) <-  "CellType"
+markers = FindAllMarkers(obj, logfc.threshold = 0, test.use = "wilcox", group.by = "CellType")
+```
+
+
+
+```{r}
+psi <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_psi.rds")
+colnames(psi) <- str_replace_all(colnames(psi), ".psi", "")
+meta = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/meta.rds")
+meta = meta[!meta$CellType %in% c("HSC", "erythroid", "platelet"), ]
+
+meta$CellType = factor(meta$CellType)
+
+
+gc()
+
+# fake_counts = matrix(0, nrow = nrow(psi), ncol = ncol(psi))
+# fake_counts = apply(fake_counts, 1, function(x) {
+#   sample.int(10, size = ncol(psi), replace = T)
+# })
+# fake_counts = as.matrix(t(fake_counts))
+# 
+# rownames(fake_counts) = rownames(psi)
+# colnames(fake_counts) = colnames(psi)
+# mcsaveRDS(fake_counts, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/fake_psi_counts.rds")
+
+
+fake_counts = mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/fake_psi_counts.rds")
+obj <- ICASDataSetFromMatrix(
+  countData = fake_counts,
+  colData = meta,
+  design = "CellType"
+)
+
+ICAS::psi(obj) <- as.matrix(psi)
+
+
+markers = ICAS::FindAllMarkers(obj, logfc.threshold = 0, test.use = "tobit", group.by = "CellType")
+
+
+fake_counts = mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/fake_psi_counts.rds")
+
+meta$recovery_stage = factor(meta$recovery_stage)
+obj <- ICASDataSetFromMatrix(
+  countData = fake_counts,
+  colData = meta,
+  design = "recovery_stage"
+)
+
+ICAS::psi(obj) <- as.matrix(psi)
+
+
+markers = ICAS::FindAllMarkers(obj, logfc.threshold = 0, test.use = "tobit", group.by = "recovery_stage")
+
+saveRDS(markers,"/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes_tobit_stage.rds")
+```
+
+
+## CellType comparision
+### CD14 mono and CD16 mono
+```{r}
+cells = sort(meta$CellType)
+
+
+obj@design = "CellType"
+
+i = "CD14 mono"
+j = "CD16 mono"
+tryCatch({
+  temp = ICAS::FindMarkers(obj, ident.1 = i, ident.2 = j, test.use = "tobit", group.by = "CellType")
+  
+  if (nrow(temp) > 0) {
+    temp$comp = paste(i, j, sep = " - ")
+    markers = rbind(markers, temp)
+  }
+}, error = function(e) {
+  print(e)
+})
+
+i = "NK"
+j = "NKT"
+tryCatch({
+  temp = ICAS::FindMarkers(obj, ident.1 = i, ident.2 = j, test.use = "tobit", group.by = "CellType")
+  
+  if (nrow(temp) > 0) {
+    temp$comp = paste(i, j, sep = " - ")
+    markers = rbind(markers, temp)
+  }
+}, error = function(e) {})
+
+
+i = "naïve CD4"
+j = "naïve CD8"
+tryCatch({
+  temp = ICAS::FindMarkers(obj, ident.1 = i, ident.2 = j, test.use = "tobit", group.by = "CellType")
+  
+  if (nrow(temp) > 0) {
+    temp$comp = paste(i, j, sep = " - ")
+    markers = rbind(markers, temp)
+  }
+}, error = function(e) {
+  print(e)
+})
+
+
+group = list(
+  "lymphoid"=c("Treg", "MAIT", "naïve CD4", "Proliferative T", "γδT", "NKT", "CD8 memory", "naïve CD8", "CD8 CTL", "naïve B", "memory B", "NK", "pDC"),
+  "myeloid"=c("mDC",  "CD16 mono", "CD14 mono")
+)
+
+obj@colData$Class = "None"
+obj@colData$Class[obj@colData$CellType %in% group[["myeloid"]]] = "myeloid"
+obj@colData$Class[obj@colData$CellType %in% group[["lymphoid"]]] = "lymphoid"
+obj@colData$Class = factor(obj@colData$Class)
+
+obj@design = "Class"
+
+i = "myeloid"
+j = "lymphoid"
+tryCatch({
+  temp = ICAS::FindMarkers(
+    obj, 
+    ident.1 = i, 
+    ident.2 = j, 
+    test.use = "tobit", group.by = "Class"
+  )
+  
+  if (nrow(temp) > 0) {
+    temp$comp = paste(i, j, sep = " - ")
+    markers = rbind(markers, temp)
+  }
+}, error = function(e) {
+  print(e)
+})
+
+markers$gene = str_replace_all(rownames(markers), "\\d+$", "")
+
+saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/ICAS_obj.rds")
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_lymphoid_myeloid.rds")
 ```
 
 
 ```{R}
-obj = RunPCA(obj, features = VariableFeatures(object = obj))
+markers = markers[order(markers$deltaPSI), ]
+
+pct_thred = .3
+
+set.seed(42)
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/cell_types_and_class.pdf", width = 6, height = 6)
+for (i in unique(markers$comp)) {
+  cells = str_split(i, " - ")[[1]]
+  
+  if (!cells[1] %in% unique(obj@colData$CellType)) {
+    temp_meta = obj@colData[obj@colData$Class %in% cells, ]
+    
+    temp_meta = as.data.frame(temp_meta) %>%
+      group_by(Class) %>%
+      sample_n(500, replace = T) %>%
+      unique() %>%
+      as.data.frame()
+    
+    temp = obj@psi[markers$gene[markers$comp == i & abs(markers$pct.2 - markers$pct.1) > pct_thred], as.character(temp_meta$Cells)]
+    
+    h = Heatmap(
+      temp, name = "PSI",
+      cluster_rows = F,
+      cluster_columns = T,
+      show_row_names = F,
+      show_column_names = F,
+      column_split = temp_meta$Class,
+      clustering_method_rows = "ward.D2",
+      col = colorRamp2(c(0, .5, 1), c("blue", "#EEEEEE", "red"), space = "RGB"),
+      use_raster = T
+    )
+    
+    draw(h)
+  } else {
+    temp_meta = obj@colData[obj@colData$CellType %in% cells, ]
+    
+    temp_meta = as.data.frame(temp_meta) %>%
+      group_by(CellType) %>%
+      sample_n(500, replace = T) %>%
+      unique() %>%
+      as.data.frame()
+    
+    temp = obj@psi[markers$gene[markers$comp == i & abs(markers$pct.2 - markers$pct.1) > pct_thred], as.character(temp_meta$Cells)]
+    
+    h = Heatmap(
+      temp, name = "PSI",
+      cluster_rows = F,
+      cluster_columns = T,
+      show_row_names = F,
+      show_column_names = F,
+      column_split = temp_meta$CellType,
+      clustering_method_rows = "ward.D2",
+      col = colorRamp2(c(0, .5, 1), c("blue", "#EEEEEE", "red"), space = "RGB"),
+      use_raster = T
+    )
+    
+    draw(h)
+  }
+}
+dev.off()
+```
+
+
+```{R}
+markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes.rds")
+markers <- markers[markers$p_val_adj < 0.05 & markers$avg_logFC > .5, ]
+
+obj = RunPCA(obj, features = unique(markers$gene)) # VariableFeatures(object = obj))
 
 ElbowPlot(obj)
 ```
 
 ```{R}
-obj <- FindNeighbors(obj, dims = 1:10)
+obj <- FindNeighbors(obj, dims = 1:6)
 # obj <- FindClusters(obj, resolution = 0.5)
-obj <- RunUMAP(obj, dims = 1:10)
+obj <- RunUMAP(obj, dims = 1:6)
 ```
 
 
@@ -125,124 +383,854 @@ DimPlot(obj, reduction = "umap", group.by = "CellType", label = T) +
 ```
 
 
-```{r fig.height=6, fig.width=6}
-obj@meta.data$group = str_replace_all(obj@meta.data$Patient.ID, "\\d$", "")
-DimPlot(obj, reduction = "umap", group.by = "group", label = T)
+```{r}
+# obj <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/seurat_obj_5000.rds")
+
+meta = readRDS("/mnt/raid64/Covid19_Gravida/rds/meta_rm_doublets.rds")
+obj@colData$recovery_stage = sapply(meta[rownames(obj@colData), "recovery_stage"], function(x) {
+  id_maps = c(
+    "HNC"="NHC", "RP_S1"="PCovM", "RP_S2"="PCovS",
+    "HPC"="PHC", "RN_S1"="NCovM", "RN_S2"="NCovS"
+    )
+  
+  id_maps[[x]]
+})
 ```
 
-```{R}
-saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/seurat_obj.rds")
+
+```{r}
+custom_fill_colors = c(
+    RColorBrewer::brewer.pal(9, "Blues")[c(4, 6, 8, 9)],
+    RColorBrewer::brewer.pal(9, "Greens")[4:7],
+    RColorBrewer::brewer.pal(9, "YlGn")[1],
+    RColorBrewer::brewer.pal(9, "Oranges")[c(2, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Reds")[c(1, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Purples")[4:6],
+    "grey75"
+)
+names(custom_fill_colors) <- c(
+    "CD14 mono", "CD16 mono", "mDC", "pDC",
+    "naïve B", "plasma B", "memory B", "HSC",
+    "naïve CD8",  "naïve CD4", "CD8 memory",
+    "CD8 CTL",  "NKT", "MAIT",  
+    "Treg", "NK", "γδT",
+    "Proliferative T",
+    "platelet", "erythroid",
+    "NA"
+)
+
+
+# names(custom_fill_colors) <- sort(unique(obj@meta.data$CellType))
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+umap$X2 = obj@meta.data[rownames(umap), "CellType"]
+umap$group = as.character(obj@meta.data[rownames(umap), "recovery_stage"])
+umap = umap[!umap$X2 %in% c("HSC", "platelet", "erythroid"), ]
+
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/cell_types.pdf", width  = 6, height = 6)
+make_cell_types_plot3(
+    umap,  
+    group_by = "X2", 
+    label = "X2",
+    title = "",
+    legend.position = "none",
+    text_size = 5,
+    colors = custom_fill_colors
+)
+dev.off()
+# DimPlot(obj, reduction = "umap", label = T) + NoLegend()
+
+
+
+colors = c(
+  RColorBrewer::brewer.pal(9, "RdYlGn")[c(1, 3)],
+  RColorBrewer::brewer.pal(9, "Blues")[5],
+  RColorBrewer::brewer.pal(9, "Greens")[5],
+  RColorBrewer::brewer.pal(9, "Blues")[7],
+  RColorBrewer::brewer.pal(9, "Greens")[7]
+)
+names(colors) = c("PCovS", "NCovS", "PCovM", "NCovM", "PHC", "NHC")
+
+make_cell_types_plot3(
+    umap,  
+    group_by = "group", 
+    label = "group",
+    title = "",
+    legend.position = "none",
+    text_size = 5,
+    colors = colors
+)
 ```
 
 
 
 ```{r}
-markers = NULL
-for (i in unique(obj@meta.data$CellType)) {
-    print(i)
+registerDoMC(10)
+markers = foreach (i = unique(obj@meta.data$CellType), .combine = "rbind") %dopar% {
     temp = FindMarkers(obj, ident.1 = i, group.by = "CellType")
     temp$gene = rownames(temp)
     temp$CellType = i
-    markers = rbind(markers, temp)
+    temp
 }
-saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/markers_between_ßcelltypes.rds")
+
+
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes.rds")
 ```
 
 
+
 ```{r}
+markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes.rds")
+markers <- markers[markers$p_val_adj < 0.05, ]
+markers <- markers[!markers$CellType %in% c("platelet", "erythroid", "HSC"), ]
+```
 
-obj@meta.data$temp_group = paste(obj@meta.data$CellType, obj@meta.data$group, sep = "|")
 
-registerDoMC(4)
-temp = foreach (i = unique(obj@meta.data$CellType), .errorhandling = "pass") %dopar% {
+```{r fig.height=6, fig.width=10}
+temp = dcast(markers, gene~CellType, value.var = "avg_logFC", fill = 0)
+rownames(temp) <- temp$gene
+temp = temp[, colnames(temp) != "gene"]
+
+Heatmap(
+  t(temp), name = "avg_logFC",
+  col = colorRamp2(c(-3, 0, 3), c("blue", "grey75", "red")),
+  show_column_names = F,
+  clustering_method_rows = "ward.D2",
+  clustering_method_columns = "ward.D2"
+)
+```
+
+
+## Prepare cell type specific bc list
+```{r}
+temp = obj@colData[!obj@colData$CellType %in% c("platelet", "erythroid", "HSC"), ]
+temp$group = str_replace_all(temp$recovery_stage, "(S|M)$", "")
+
+map_ids = list()
+for (i in 1:nrow(temp)) {
+  map_ids[[as.character(temp[i, "Patient"])]] = temp[i, "recovery_stage"]
+}
+
+
+temp$FCells = sapply(temp$Cells, function(x) {
+  x = str_split(x, "_")[[1]]
+  paste(map_ids[[x[2]]], x[1], sep = "_")
+})
+
+
+write.table(
+  temp[, c("FCells", "CellType")], "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/celltype_bc.txt", 
+  quote = F, col.names = F, row.names = F, sep = "\t"
+)
+
+
+temp_meta = as.data.frame(temp_meta) %>%
+  group_by(Class) %>%
+  sample_n(500, replace = T) %>%
+  unique() %>%
+  as.data.frame()
+
+temp_meta$group = str_replace_all(temp_meta$recovery_stage, "(S|M)$", "")
+
+temp_meta$FCells = sapply(temp_meta$Cells, function(x) {
+  x = str_split(x, "_")[[1]]
+  paste(map_ids[[x[2]]], x[1], sep = "_")
+})
+
+
+write.table(
+  temp_meta[temp_meta$Class != "None", c("FCells", "Class")], "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/cellclass_bc.txt", 
+  quote = F, col.names = F, row.names = F, sep = "\t"
+)
+
+
+
+custom_fill_colors = c(
+    RColorBrewer::brewer.pal(9, "Blues")[c(4, 6, 8, 9)],
+    RColorBrewer::brewer.pal(9, "Greens")[4:7],
+    RColorBrewer::brewer.pal(9, "YlGn")[1],
+    RColorBrewer::brewer.pal(9, "Oranges")[c(2, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Reds")[c(1, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Purples")[4:6],
+    "grey75"
+)
+names(custom_fill_colors) <- c(
+    "CD14 mono", "CD16 mono", "mDC", "pDC",
+    "naïve B", "plasma B", "memory B", "HSC",
+    "naïve CD8",  "naïve CD4", "CD8 memory",
+    "CD8 CTL",  "NKT", "MAIT",  
+    "Treg", "NK", "γδT",
+    "Proliferative T",
+    "platelet", "erythroid",
+    "NA"
+)
+
+temp = as.data.frame(custom_fill_colors)
+temp = temp[!rownames(temp) %in% c("NA", "platelet", "erythroid", "HSC"), , drop = F]
+
+write.table(
+  temp, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/celltype_order.txt", 
+  quote = F, col.names = F, row.names = T, sep = "\t"
+)
+
+
+write.table(
+  data.frame(
+    cell = c("lympoid", "myeloid"), 
+    color = c(RColorBrewer::brewer.pal(11, "RdYlBu")[3], RColorBrewer::brewer.pal(11, "RdYlBu")[9])
+  ), "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/cellclass_order.txt", 
+  quote = F, col.names = F, row.names = T, sep = "\t"
+)
+```
+
+
+
+```{r}
+meta = readRDS("/mnt/raid64/Covid19_Gravida/rds/meta_rm_doublets.rds")
+obj@meta.data$recovery_stage = sapply(meta[rownames(obj@meta.data), "recovery_stage"], function(x) {
+  id_maps = c(
+    "HNC"="NHC", "RP_S1"="PCovM", "RP_S2"="PCovS",
+    "HPC"="PHC", "RN_S1"="NCovM", "RN_S2"="NCovS"
+    )
+  
+  id_maps[[x]]
+})
+
+
+obj@colData$temp_group = paste(obj@colData$CellType, obj@colData$recovery_stage, sep = "|")
+
+
+calculate_markers <- function(obj, ident.1, ident.2, group.by, comp) {
+  tryCatch({
+    temp = FindMarkers(
+      obj, ident.1 = paste(i, j, sep = "|"), 
+      ident.2 = paste(i, "NHC", sep = "|"), 
+      group.by = "temp_group",
+      logfc.threshold = 0
+    )
+    temp$gene = rownames(temp)
+    temp$CellType = i
+    temp$comp = paste(j, "HN", sep = " - ")
+    return(temp)
+  }, error = function(e) {})
+  
+  return(NULL)
+}
+
+
+ref = readRDS("/mnt/raid64/Covid19_Gravida/rds/meta_rm_doublets.rds")
+meta$recovery_stage = sapply(ref[rownames(meta), "recovery_stage"], function(x) {
+  id_maps = c(
+    "HNC"="NHC", "RP_S1"="PCovM", "RP_S2"="PCovS",
+    "HPC"="PHC", "RN_S1"="NCovM", "RN_S2"="NCovS"
+    )
+  
+  id_maps[[x]]
+})
+
+markers = NULL
+for (i in unique(meta$CellType)) {
+  temp_meta = meta[meta$CellType == i, ]
+  temp_meta$recovery_stage = factor(temp_meta$recovery_stage)
+  obj <- ICASDataSetFromMatrix(
+    countData = fake_counts[, rownames(temp_meta)],
+    colData = temp_meta,
+    design = "recovery_stage"
+  )
+  
+  ICAS::psi(obj) <- as.matrix(psi[, rownames(temp_meta)])
+  
+    if (i %in% c("HSC", "erythroid", "platelet" )) {
+      next
+    }
+  
     print(i)
-    markers = NULL
+
     for (j in c("NCovM", "NCovS")) {
-        temp = FindMarkers(obj, ident.1 = paste(i, j, sep = "|"), ident.2 = paste(i, "HN", sep = "|"), group.by = "temp_group")
+        temp = ICAS::FindMarkers(
+          obj, ident.1 = j, 
+          ident.2 = "NHC", 
+          group.by = "temp_group",
+          logfc.threshold = 0,
+          test.use = "tobit"
+        )
         temp$gene = rownames(temp)
         temp$CellType = i
-        temp$comp = paste(j, "HN", sep = " - ")
+        temp$comp = paste(j, "NHC", sep = " - ")
         markers = rbind(markers, temp)
     }
     
     for (j in c("PCovM", "PCovS")) {
-        temp = FindMarkers(obj, ident.1 = paste(i, j, sep = "|"), ident.2 = paste(i, "HP", sep = "|"), group.by = "temp_group")
+        temp = ICAS::FindMarkers(
+          obj, ident.1 = j, 
+          ident.2 = "PHC", 
+          group.by = "temp_group",
+          logfc.threshold = 0,
+          test.use = "tobit"
+        )
         temp$gene = rownames(temp)
         temp$CellType = i
-        temp$comp = paste(j, "HP", sep = " - ")
+        temp$comp = paste(j, "PHC", sep = " - ")
+        markers = rbind(markers, temp)
+        
+        temp = ICAS::FindMarkers(
+          obj, ident.1 = j, 
+          ident.2 = str_replace_all(j, "P", "N"), 
+          group.by = "temp_group",
+          logfc.threshold = 0,
+          test.use = "tobit", 
+        )
+        temp$gene = rownames(temp)
+        temp$CellType = i
+        temp$comp = paste(j, str_replace_all(j, "P", "N"), sep = " - ")
         markers = rbind(markers, temp)
     }
     
-    temp = FindMarkers(obj, ident.1 = paste(i, "NCovS", sep = "|"), ident.2 = paste(i, "NCovM", sep = "|"), group.by = "temp_group")
+    temp = ICAS::FindMarkers(
+      obj, ident.1 = "NCovS", 
+      ident.2 = "NCovM", 
+      group.by = "temp_group",
+      logfc.threshold = 0
+    )
     temp$gene = rownames(temp)
     temp$CellType = i
     temp$comp = "NCovS - NCovM"
     markers = rbind(markers, temp)
     
-    temp = FindMarkers(obj, ident.1 = paste(i, "PCovS", sep = "|"), ident.2 = paste(i, "PCovM", sep = "|"), group.by = "temp_group")
+    temp = ICAS::FindMarkers(
+      obj, ident.1 = "PCovS",
+      ident.2 = "PCovM", 
+      group.by = "temp_group",
+      logfc.threshold = 0,
+      test.use = "tobit"
+    )
     temp$gene = rownames(temp)
     temp$CellType = i
     temp$comp = "PCovS - PCovM"
     markers = rbind(markers, temp)
-    return (markers)
 }
-
-markers = NULL
-for (i in temp) {
-    if(is.null(i)) {
-        next
-    }
-    markers = rbind(markers, i)
-}
-
-saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/cage_sel/200/markers_between_groups.rds")
 ```
 
 
 ```{R}
-test_xu <- read.delim("/mnt/raid64/ATS/Personal/zhangyiming/infered/NHC2_R.txt")
+markers = markers[markers$p_val_adj < 0.05, ]
+temp = markers %>%
+  group_by(CellType, comp) %>%
+  add_tally() %>%
+  dplyr::select(CellType, comp,n) %>%
+  unique() %>%
+  as.data.frame()
 
 
-get_data = function(path, pattern) {
-  data = read.delim(path)
-  data = data[str_detect(data$utr, pattern), ]
+temp = obj@meta.data[!obj@meta.data$CellType %in% c("platelet", "erythroid", "HSC"), ]
+
+temp = meta[!meta$CellType %in% c("platelet", "erythroid", "HSC"), ]
+temp$recovery_stage = as.character(obj@meta.data[as.character(temp$Cells), "recovery_stage"])
+temp$group = str_replace_all(temp$recovery_stage, "(S|M)$", "")
+
+map_ids = list()
+for (i in 1:nrow(temp)) {
+  map_ids[[as.character(temp[i, "Patient"])]] = temp[i, "recovery_stage"]
+}
+
+for (i in unique(temp$CellType)) {
+  temp$FCells = sapply(temp$Cells, function(x) {
+    x = str_split(x, "_")[[1]]
+    paste(map_ids[[x[2]]], x[1], sep = "_")
+  })
   
-  if (nrow(data) < 1) {
-    return(list())
-  }
+  write.table(
+    temp[temp$CellType == i, c("FCells", "recovery_stage")], 
+    paste0("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/", str_replace_all(i, " ", "_"), "_bc.txt"), 
+    quote = F, col.names = F, row.names = F, sep = "\t"
+  )
+}
+
+temp$FCells = as.character(rownames(temp))
+write.table(
+    temp[, c("FCells", "recovery_stage")], 
+    "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/stage_bc.txt", 
+    quote = F, col.names = F, row.names = F, sep = "\t"
+)
+
+colors = c(
+  RColorBrewer::brewer.pal(9, "RdYlGn")[c(1, 3)],
+  RColorBrewer::brewer.pal(9, "Blues")[5],
+  RColorBrewer::brewer.pal(9, "Greens")[5],
+  RColorBrewer::brewer.pal(9, "Blues")[7],
+  RColorBrewer::brewer.pal(9, "Greens")[7]
+)
+names(colors) = c("PCovS", "NCovS", "PCovM", "NCovM", "PHC", "NHC")
+
+temp = as.data.frame(colors)
+
+write.table(
+  temp[c("PHC", "PCovM", "PCovS", "NHC", "NCovM", "NCovS"), , drop = F], "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/cd14_mono_order.txt", 
+  quote = F, col.names = F, row.names = T, sep = "\t"
+)
+
+```
+
+
+```{r}
+library(tsidx)
+
+meta = obj@meta.data
+
+meta$CellType <- as.factor(meta$CellType)
+
+tsi <- tsDataSetFromMatrix(
+    data[rowSums(data) > 2000, rownames(meta)], 
+    meta, 
+    ~ CellType, 
+    type = "expression",
+    convMethod = "log2",
+    IbMethod = "mingap",
+    mindiff = 3, 
+    tidy = FALSE, 
+    breaks = NULL,
+)
+gc()
+```
+
+```{r}
+mcsaveRDS(tsi, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/tsi_2000.rds")
+
+tau = as.data.frame(tsi@tsData$Tau)
+
+
+saveRDS(tau, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/tau_2000.rds")
+```
+
+
+```{r}
+counts = trqwe::mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/seurat_obj_5000.rds")
+psi = trqwe::mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_psi.rds")
+
+colnames(psi) = str_replace_all(colnames(psi), ".psi", "")
+```
+
+
+
+## CellType tobit hist
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes_tobit.rds")
+
+hist(markers$p_val)
+```
+
+
+```{R fig.height=6, fig.width=10}
+set.seed(42)
+temp_meta = meta %>%
+  group_by(CellType) %>%
+  sample_n(500, replace = T) %>%
+  unique() %>%
+  as.data.frame()
+
+custom_fill_colors = c(
+    RColorBrewer::brewer.pal(9, "Blues")[c(4, 6, 8, 9)],
+    RColorBrewer::brewer.pal(9, "Greens")[4:7],
+    RColorBrewer::brewer.pal(9, "YlGn")[1],
+    RColorBrewer::brewer.pal(9, "Oranges")[c(2, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Reds")[c(1, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Purples")[4:6],
+    "grey75"
+)
+names(custom_fill_colors) <- c(
+    "CD14 mono", "CD16 mono", "mDC", "pDC",
+    "naïve B", "plasma B", "memory B", "HSC",
+    "naïve CD8",  "naïve CD4", "CD8 memory",
+    "CD8 CTL",  "NKT", "MAIT",  
+    "Treg", "NK", "γδT",
+    "Proliferative T",
+    "platelet", "erythroid",
+    "NA"
+)
+
+ta = HeatmapAnnotation(
+  CellType = temp_meta$CellType,
+  col = list(
+    CellType = custom_fill_colors
+  )
+)
+
+
+Heatmap(
+  psi[markers$gene[markers$pct.1 > 0.5 & markers$pct.2 < .5], as.character(temp_meta$Cells)], name = "PSI",
+  cluster_rows = F,
+  cluster_columns = F,
+  row_split = markers$CellType[markers$pct.1 > 0.5 & markers$pct.2 < .5],
+  column_split = temp_meta$CellType,
+  col = colorRamp2(c(0, 0.5, 1), c("blue", "white", "red")),
+  show_row_names = F, show_column_names = F,
+  row_title_rot = 0,
+  column_title_gp = gpar(fontsize = 0),
+  top_annotation = ta
+)
+```
+
+
+## group p val hist
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_groups_tobit.rds")
+
+hist(markers$p_val)
+```
+
+
+## cell type p val hist
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes_psi.rds")
+
+hist(markers$p_val)
+```
+
+
+```{R fig.height=6, fig.width=10}
+set.seed(42)
+temp_meta = meta %>%
+  group_by(CellType) %>%
+  sample_n(500, replace = T) %>%
+  unique() %>%
+  as.data.frame()
+
+custom_fill_colors = c(
+    RColorBrewer::brewer.pal(9, "Blues")[c(4, 6, 8, 9)],
+    RColorBrewer::brewer.pal(9, "Greens")[4:7],
+    RColorBrewer::brewer.pal(9, "YlGn")[1],
+    RColorBrewer::brewer.pal(9, "Oranges")[c(2, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Reds")[c(1, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Purples")[4:6],
+    "grey75"
+)
+names(custom_fill_colors) <- c(
+    "CD14 mono", "CD16 mono", "mDC", "pDC",
+    "naïve B", "plasma B", "memory B", "HSC",
+    "naïve CD8",  "naïve CD4", "CD8 memory",
+    "CD8 CTL",  "NKT", "MAIT",  
+    "Treg", "NK", "γδT",
+    "Proliferative T",
+    "platelet", "erythroid",
+    "NA"
+)
+
+ta = HeatmapAnnotation(
+  CellType = temp_meta$CellType,
+  col = list(
+    CellType = custom_fill_colors
+  )
+)
+
+
+Heatmap(
+  psi[
+    sapply(markers$gene[markers$pct.1 > 0.5 & markers$pct.2 < .5], function(x) {
+      x = str_split(x, ":")[[1]]
+      chrom = str_split(x, "-")[[1]]
+      gene = paste(chrom[1:(length(chrom) - 1)], collapse = "-")
+      
+      chrom = chrom[length(chrom)]
+      
+      paste(gene, paste(c(chrom, x[2], x[3]), collapse = ":"), sep = "|")
+    }), 
+    as.character(temp_meta$Cells)
+  ], name = "PSI",
+  cluster_rows = F,
+  cluster_columns = F,
+  row_split = markers$CellType[markers$pct.1 > 0.5 & markers$pct.2 < .5],
+  column_split = temp_meta$CellType,
+  col = colorRamp2(c(0, 0.5, 1), c("blue", "white", "red")),
+  show_row_names = F, show_column_names = F,
+  row_title_rot = 0,
+  column_title_gp = gpar(fontsize = 0),
+  top_annotation = ta
+)
+```
+
+## group p val hist
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_groups_psi.rds")
+
+hist(markers$p_val)
+```
+
+
+## group p val hist
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_groups_tobit.rds")
+
+ggplot(markers, aes(x=p_val_adj, fill = CellType)) +
+  geom_histogram(position = position_dodge())
+```
+
+
+```{R fig.height=6, fig.width=10}
+temp_markers = markers[str_detect(markers$comp, "HC$") & markers$p_val_adj < 0.05,  ]
+
+
+colors = c(
+  RColorBrewer::brewer.pal(9, "RdYlGn")[c(1, 3)],
+  RColorBrewer::brewer.pal(9, "Blues")[5],
+  RColorBrewer::brewer.pal(9, "Greens")[5],
+  RColorBrewer::brewer.pal(9, "Blues")[7],
+  RColorBrewer::brewer.pal(9, "Greens")[7]
+)
+names(colors) = c("PCovS", "NCovS", "PCovM", "NCovM", "PHC", "NHC")
+
+
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_groups_tobit.pdf", width = 10, height = 6)
+for (i in unique(markers$CellType)) {
+  set.seed(42)
+  temp_meta = meta[meta$CellType == i, ] %>%
+    group_by(recovery_stage) %>%
+    sample_n(1500, replace = T) %>%
+    unique() %>%
+    as.data.frame()
   
-  for (i in colnames(data)) {
-    if(str_detect(data[1, i], ":")) {
-      res[[i]] = data[1, i]
-    } else if(str_detect(data[1, i], ",")) {
-      res[[i]] = as.numeric(strsplit(as.character(data[1, i]),',')[[1]])
-    } else {
-      res[[i]] = as.numeric(data[1, i])
+  ta = HeatmapAnnotation(
+    Group = temp_meta$recovery_stage,
+    col = list(
+      Group = colors
+    )
+  )
+  
+  h <- Heatmap(
+    psi[
+      temp_markers$gene[temp_markers$CellType == i], 
+      as.character(temp_meta$Cells)
+    ], name = "PSI",
+    cluster_rows = T,
+    cluster_columns = T,
+    row_split = temp_markers$comp[temp_markers$CellType == i],
+    column_split = temp_meta$recovery_stage,
+    col = colorRamp2(c(0, 0.5, 1), c("blue", "white", "red")),
+    show_row_names = F, show_column_names = F,
+    row_title_rot = 0,
+    # column_title_gp = gpar(fontsize = 0),
+    column_title = i,
+    use_raster = T,
+    top_annotation = ta
+  )
+  draw(h)
+}
+dev.off()
+```
+
+
+### UMAP
+```{r}
+obj <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/ICAS_obj.rds")
+
+so = CreateSeuratObject(
+  round(obj@psi),
+  meta.data = as.data.frame(obj@colData)
+)
+
+so = NormalizeData(so)
+so@assays$RNA@data = obj@psi
+rownames(so@assays$RNA@data) = rownames(so@assays$RNA@counts)
+so = FindVariableFeatures(so)
+so = ScaleData(so)
+so@assays$RNA@scale.data = obj@psi
+rownames(so@assays$RNA@scale.data) = rownames(so@assays$RNA@counts)
+so = RunPCA(so)
+```
+
+```{R}
+ElbowPlot(so)
+```
+
+
+```{r}
+so = RunUMAP(so, dims = 1:5)
+```
+
+
+```{R}
+DimPlot(so, reduction = "umap", group.by = "CellType")
+```
+
+```{r}
+
+make_cell_types_plot3 <- function(
+    coord,
+    pt.size = 0.1, 
+    alpha = 0.8,
+    text_size = 10,
+    axis_size = 18,
+    axis_title_size = 20,
+    title_size = 25,
+    group_by = "",
+    label = "cell_name",
+    title = "Cell type",
+    legend.position = "none",
+    colors = NULL
+) {
+    data = coord[, c("UMAP_1", "UMAP_2", group_by, label)]
+    colnames(data) = c("UMAP1", "UMAP2", group_by, "Label")
+    label = "Label"
+    
+    if (group_by == "") {
+        group_by = "cell"
     }
-  }
+    
+    p <- eval(
+        parse(text=paste0(
+                "ggplot(data = data, aes(x=UMAP1, y=UMAP2, color=", group_by, ", alpha=alpha))"
+            )
+        )
+    )
+    
+    if (!is.null(label)) {
+
+        text_loc = eval(
+            parse(text=paste0("data %>% group_by(", label, ") %>% mutate(x = median(UMAP1), y = median(UMAP2)) %>% dplyr::select(x, y, ", label, ")"))
+        )
+        
+        text_loc = text_loc %>% unique() %>% as.data.frame()
+        
+        # print(text_loc)
+    }
+    
+    p <- p + geom_point_rast(aes(alpha=alpha), size = pt.size)
+    
+    if (!is.null(label)) {
+        p <- p + eval(parse(text=paste0("geom_text_repel(data = text_loc,  aes(x=x, y=y, label = ", label, "), color = \"black\", size = text_size, alpha = 1)")))
+    }
+    
+    p <- p + 
+        theme_bw() +
+        labs(
+            title = title
+        ) +
+        theme(
+            plot.title = element_text(hjust = 0.5, face="bold", size = title_size),
+            legend.position = legend.position,
+            axis.text = element_text(size = axis_size),
+            axis.title = element_text(size = axis_title_size),
+            panel.grid = element_blank(),
+            aspect.ratio=1
+        )
+    
+    if (!is.null(colors)) {
+        p <- p + scale_color_manual(values = colors)
+    }
+    p
+}
+
+
+custom_fill_colors = c(
+    RColorBrewer::brewer.pal(9, "Blues")[c(4, 6, 8, 9)],
+    RColorBrewer::brewer.pal(9, "Greens")[4:7],
+    RColorBrewer::brewer.pal(9, "YlGn")[1],
+    RColorBrewer::brewer.pal(9, "Oranges")[c(2, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Reds")[c(1, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Purples")[4:6],
+    "grey75"
+)
+names(custom_fill_colors) <- c(
+    "CD14 mono", "CD16 mono", "mDC", "pDC",
+    "naïve B", "plasma B", "memory B", "HSC",
+    "naïve CD8",  "naïve CD4", "CD8 memory",
+    "CD8 CTL",  "NKT", "MAIT",  
+    "Treg", "NK", "γδT",
+    "Proliferative T",
+    "platelet", "erythroid",
+    "NA"
+)
+
+colors = c(
+  RColorBrewer::brewer.pal(9, "RdYlGn")[c(1, 3)],
+  RColorBrewer::brewer.pal(9, "Blues")[5],
+  RColorBrewer::brewer.pal(9, "Greens")[5],
+  RColorBrewer::brewer.pal(9, "Blues")[7],
+  RColorBrewer::brewer.pal(9, "Greens")[7]
+)
+names(colors) = c("PCovS", "NCovS", "PCovM", "NCovM", "PHC", "NHC")
+
+colors1 = c(
+  RColorBrewer::brewer.pal(9, "RdYlGn")[1],
+  RColorBrewer::brewer.pal(9, "RdYlGn")[3],
+  RColorBrewer::brewer.pal(9, "Blues")[7],
+  RColorBrewer::brewer.pal(9, "Greens")[7]
+)
+names(colors1) = c("PCov", "NCov", "PHC", "NHC")
+```
+
+
+```{r}
+so@meta.data$recovery_stage = sapply(meta[rownames(so@meta.data), "recovery_stage"], function(x) {
+  id_maps = c(
+    "HNC"="NHC", "RP_S1"="PCovM", "RP_S2"="PCovS",
+    "HPC"="PHC", "RN_S1"="NCovM", "RN_S2"="NCovS"
+    )
   
-  res
+  id_maps[[x]]
+})
+
+
+# names(custom_fill_colors) <- sort(unique(obj@meta.data$CellType))
+umap = as.data.frame(so@reductions$umap@cell.embeddings)
+umap$X2 = so@meta.data[rownames(umap), "CellType"]
+umap$group = as.character(so@meta.data[rownames(umap), "recovery_stage"])
+umap = umap[!umap$X2 %in% c("HSC", "platelet", "erythroid"), ]
+
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/celltype_umap.pdf", width  = 6, height = 6)
+make_cell_types_plot3(
+    umap,  
+    group_by = "X2", 
+    label = "X2",
+    title = "",
+    legend.position = "none",
+    text_size = 5,
+    colors = custom_fill_colors
+)
+dev.off()
+# DimPlot(obj, reduction = "umap", label = T) + NoLegend()
+
+
+umap$X3 = umap$X2
+
+# plist = list()
+# for(i in c("PHC", "PCov", "NHC",  "NCov")) {
+#   umap$X2 = umap$X3
+#   umap$X2[!str_detect(umap$group, i)] = "NA"
+#   umap = rbind(umap[umap$X2 == "NA", ], umap[umap$X2 != "NA", ])
+#   plist[[length(plist) + 1]] <- make_cell_types_plot3(
+#       umap,  
+#       group_by = "X2", 
+#       label = "X2",
+#       title = str_replace_all(str_replace_all(i, "HNC", "NHC"), "HPC", "PNC"),
+#       legend.position = "none",
+#       text_size = 5,
+#       colors = custom_fill_colors
+#   ) + theme(axis.ticks = element_blank(), axis.text = element_blank()) + labs(x="", y="")
+# }
+
+
+plist = list()
+for(i in c("P", "N")) {
+  umap$X2 = umap$X3
+  umap$X2 = str_replace_all(umap$group, "(S|M)$", "")
+  umap$X2[!str_detect(umap$group, i)] = "NA"
+  umap = rbind(umap[umap$X2 == "NA", ], umap[umap$X2 != "NA", ])
+  plist[[length(plist) + 1]] <- make_cell_types_plot3(
+      umap,  
+      group_by = "X2", 
+      label = "X2",
+      title = str_replace_all(str_replace_all(i, "HNC", "NHC"), "HPC", "PNC"),
+      legend.position = "none",
+      text_size = 5,
+      colors = c("NA" = "grey75", colors1)
+  ) + theme(axis.ticks = element_blank(), axis.text = element_blank()) + labs(x="", y="")
 }
 
-for (i in c("1:1212795-1214738:-", "1:975899-977241:-", "1:1307169-1308618:-")) {
-  res = get_data("/mnt/raid64/ATS/Personal/zhangyiming/infered/NHC2_R.txt", i)
-  saveRDS(res, paste0("/mnt/raid64/ATS/Personal/zhangyiming/infered/", i, ".rds"))
-}
 
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/celltype_umap_P_N.pdf", width  = 12, height = 12)
+cowplot::plot_grid(plotlist = plist, ncol = 2)
+dev.off()
 
-res = get_data()
-
-
-len_list = vector('list',length=nrow(test_xu))
-for(i in seq(nrow(test_xu))){
-  st_arr = as.numeric(strsplit(as.character(test_xu[i,'st_arr']),',')[[1]])
-  en_arr = as.numeric(strsplit(as.character(test_xu[i,'en_arr']),',')[[1]])
-  len_list[[i]] = st_arr-en_arr
-  break
-}
-len_arr = unlist(len_list)
-plot.new()
-plot(density(abs(len_arr)),title('fragment size distribution'),xlim=c(0,500))
+mcsaveRDS(so, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/seurat_obj_psi.rds")
 ```
 
 

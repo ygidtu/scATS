@@ -124,11 +124,11 @@ def format_model(path: str):
 
             site = line[0].split(":")
 
-            s = site[1].split("-")[0] if site[2] == "-" else site[1].split("-")[1]
-            s = int(s)
-
-            for i in line[5].split(","):
-                sites.append([site[0], (s + int(float(i)))])
+            for i in line[4].split(","):
+                try:
+                    sites.append([site[0], int(float(i))])
+                except ValueError:
+                    continue
 
     return sites
 
@@ -183,5 +183,5 @@ def model(input_dir: str, model: str, output: str, expand: int  = 2000, n_jobs: 
 
 if __name__ == '__main__':
     from fire import Fire
-    Fire()
+    Fire({"peaks": peaks, "model": model})
 

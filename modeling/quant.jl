@@ -20,8 +20,6 @@ using StatsBase
 include(joinpath(@__DIR__, "src", "genomic.jl"))
 
 
-
-
 function parse_commandline()
     s = ArgParseSettings()
 
@@ -71,6 +69,7 @@ function filter(record)::Bool
     return haskey(auxdata, "CB") && haskey(auxdata, "UB")
 end
 
+
 function determine_strand(record)::String
     strand = "*"
     flag = BAM.flag(record)
@@ -90,7 +89,8 @@ function determine_strand(record)::String
     return strand
 end
 
-function count_reads(bam::String, region::Genomic.BED, barcodes::Vector{String})::Dict{String, Int}
+
+function count_reads(bam::AbstractString, region::Genomic.BED, barcodes::Vector{String})::Dict{String, Int}
     res = Dict() 
 
     reader = open(BAM.Reader, bam, index=string(bam, ".bai"))
@@ -126,7 +126,6 @@ function count_reads(bam::String, region::Genomic.BED, barcodes::Vector{String})
 
     return Dict(x => length(y) for (x, y) = res)
 end
-
 
 
 function load_bed(input_file::String)
@@ -181,10 +180,6 @@ function load_bed(input_file::String)
                 end
             end
 
-            # if length(beds) >= 5
-            #     break
-            # end
-
             update!(p, position(r))
         end
         close(r)
@@ -205,6 +200,12 @@ function main(input_file::String, cellranger::String, output::String)
     end
 
     bam = joinpath(cellranger, "possorted_genome_bam.bam")
+    bam = absolute(Path(bam))
+
+    key = basename(dirname(dirname(bam)))
+    key = split(string(key), "-")[1]
+
+    # bam = joinpath("/mnt/raid64/Covid19_Gravida/apamix/bam", string(key, ".bam"))
 
     output = absolute(Path(output))
     out_dir = parent(output)
@@ -217,7 +218,7 @@ function main(input_file::String, cellranger::String, output::String)
         exit(1)
     end
     output = string(output)
-    
+
     open(output, "w+") do w
         stream = nothing
 
@@ -230,7 +231,7 @@ function main(input_file::String, cellranger::String, output::String)
         p = Progress(length(beds), 1, "Computing...")
         Threads.@threads for i = eachindex(beds)
             b = beds[i]
-            res = count_reads(bam,  b, barcodes)
+            res = count_reads(string(bam),  b, barcodes)
 
             row = [Genomic.get_bed_short(b)]
             for barcode = barcodes
