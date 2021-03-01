@@ -59,6 +59,34 @@ mcsaveRDS(data, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_psi.rds")
 ```
 
 
+```{r}
+fs = list.files("/mnt/raid61/Per", pattern = "psi$", full.names = T)
+
+data = NULL
+for (f in fs) {
+    key = str_replace_all(basename(f), ".quant", "")
+    
+    if (str_detect(key, "bak")) {
+        next
+    }
+    
+    print(key)
+    temp = fread(f)
+    temp = as.data.frame(temp)
+    rownames(temp) <- make.unique(temp$V1)
+    temp = temp[, colnames(temp) != "V1"]
+    
+    colnames(temp) = paste(colnames(temp), key, sep = "_")
+    
+    if(is.null(data)) {
+        data = temp
+    } else {
+        data = cbind(data, temp[rownames(data), ])
+    }
+}
+```
+
+
 ### 
 ```{r}
 meta = read.xlsx("/mnt/raid64/ATS/Personal/zhangyiming/sample_info.xlsx")
@@ -163,8 +191,17 @@ markers = FindAllMarkers(obj, logfc.threshold = 0, test.use = "wilcox", group.by
 ```{r}
 psi <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_psi.rds")
 colnames(psi) <- str_replace_all(colnames(psi), ".psi", "")
-meta = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/meta.rds")
+meta = readRDS("/mnt/raid64/Covid19_Gravida/rds/meta_rm_doublets.rds")
 meta = meta[!meta$CellType %in% c("HSC", "erythroid", "platelet"), ]
+
+meta$recovery_stage = sapply(meta$recovery_stage, function(x) {
+  id_maps = c(
+    "HNC"="NHC", "RP_S1"="PCovM", "RP_S2"="PCovS",
+    "HPC"="PHC", "RN_S1"="NCovM", "RN_S2"="NCovS"
+    )
+  
+  id_maps[[x]]
+})
 
 meta$CellType = factor(meta$CellType)
 
@@ -210,6 +247,143 @@ ICAS::psi(obj) <- as.matrix(psi)
 markers = ICAS::FindAllMarkers(obj, logfc.threshold = 0, test.use = "tobit", group.by = "recovery_stage")
 
 saveRDS(markers,"/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes_tobit_stage.rds")
+```
+
+
+### lymphoid以及myeloid之间比例
+```{R}
+group = list(
+  "lymphoid"=c("Treg", "MAIT", "naïve CD4", "Proliferative T", "γδT", "NKT", "CD8 memory", "naïve CD8", "CD8 CTL", "naïve B", "memory B", "NK", "pDC"),
+  "myeloid"=c("mDC",  "CD16 mono", "CD14 mono")
+)
+
+
+meta = readRDS("/mnt/raid64/Covid19_Gravida/rds/meta_rm_doublets.rds")
+meta = meta[!meta$CellType %in% c("HSC", "erythroid", "platelet"), ]
+
+meta$recovery_stage = sapply(meta$recovery_stage, function(x) {
+  id_maps = c(
+    "HNC"="NHC", "RP_S1"="PCovM", "RP_S2"="PCovS",
+    "HPC"="PHC", "RN_S1"="NCovM", "RN_S2"="NCovS"
+    )
+  
+  id_maps[[x]]
+})
+
+meta$CellType = factor(meta$CellType)
+
+meta$Class = "None"
+for(i in names(group)) {
+  meta$Class[meta$CellType %in% group[[i]]] = i
+}
+
+
+psi <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_psi.rds")
+colnames(psi) <- str_replace_all(colnames(psi), ".psi", "")
+fake_counts = mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/fake_psi_counts.rds")
+
+cells = intersect(colnames(psi), rownames(meta))
+
+meta$ClassGroup = factor(paste(meta$Class, meta$recovery_stage))
+meta$CellGroup = factor(paste(meta$CellType, meta$recovery_stage))
+
+
+set.seed(42)
+cells = sample(cells, round(length(cells) / 10))
+
+obj <- ICASDataSetFromMatrix(
+  countData = fake_counts[, cells],
+  colData = meta[cells, ],
+  design = "ClassGroup"
+)
+
+ICAS::psi(obj) <- as.matrix(psi)
+
+obj@colData$CellGroup = factor(obj@colData$CellGroup)
+obj@colData$ClassGroup = factor(obj@colData$ClassGroup)
+
+
+meta = meta[cells, ]
+
+markers = NULL
+obj@design = "ClassGroup"
+for (i in c("lymphoid", "myeloid")) {
+  print(i)
+
+  for (j in c("NCovM", "NCovS")) {
+      temp = ICAS::FindMarkers(
+        obj, 
+        ident.1 = paste(i, j),
+        ident.2 = paste(i, "NHC"),
+        delta.threshold = 0,
+        test.use = "tobit"
+      )
+      
+      if (nrow(temp) > 0) {
+        temp$gene = rownames(temp)
+        temp$group = paste(j, "NHC", sep = "-")
+        temp$cell = i
+        markers = rbind(markers, temp)
+      }
+  }
+  
+  for (j in c("PCovM", "PCovS")) {
+      temp = ICAS::FindMarkers(
+        obj, 
+        ident.1 = paste(i, j),
+        ident.2 = paste(i, "PHC"),
+        delta.threshold = 0,
+        test.use = "tobit"
+      )
+      
+      if (nrow(temp) > 0) {
+        temp$gene = rownames(temp)
+        temp$group = paste(j, "PHC", sep = "-")
+        temp$cell = i
+        markers = rbind(markers, temp)
+      }
+  }
+}
+
+
+obj@design = "CellGroup"
+for (i in unique(meta$CellType)) {
+  print(i)
+
+  for (j in c("NCovM", "NCovS")) {
+      temp = ICAS::FindMarkers(
+        obj, 
+        ident.1 = paste(i, j),
+        ident.2 = paste(i, "NHC"),
+        delta.threshold = 0,
+        test.use = "tobit"
+      )
+      
+      if (nrow(temp) > 0) {
+        temp$gene = rownames(temp)
+        temp$group = paste(j, "NHC", sep = "-")
+        temp$cell = i
+        markers = rbind(markers, temp)
+      }
+  }
+  
+  for (j in c("PCovM", "PCovS")) {
+      temp = ICAS::FindMarkers(
+        obj, 
+        ident.1 = paste(i, j),
+        ident.2 = paste(i, "PHC"),
+        delta.threshold = 0,
+        test.use = "tobit"
+      )
+      
+      if (nrow(temp) > 0) {
+        temp$gene = rownames(temp)
+        temp$group = paste(j, "PHC", sep = "-")
+        temp$cell = i
+        markers = rbind(markers, temp)
+      }
+  }
+}
 ```
 
 
@@ -502,19 +676,28 @@ Heatmap(
 
 ## Prepare cell type specific bc list
 ```{r}
-temp = obj@colData[!obj@colData$CellType %in% c("platelet", "erythroid", "HSC"), ]
+# temp = obj@colData[!obj@colData$CellType %in% c("platelet", "erythroid", "HSC"), ]
+
+temp = meta[!meta$CellType %in% c("platelet", "erythroid", "HSC"), ]
+
 temp$group = str_replace_all(temp$recovery_stage, "(S|M)$", "")
 
-map_ids = list()
-for (i in 1:nrow(temp)) {
-  map_ids[[as.character(temp[i, "Patient"])]] = temp[i, "recovery_stage"]
-}
+# map_ids = list()
+# for (i in 1:nrow(temp)) {
+#   map_ids[[as.character(temp[i, "Patient"])]] = temp[i, "recovery_stage"]
+# }
 
 
-temp$FCells = sapply(temp$Cells, function(x) {
-  x = str_split(x, "_")[[1]]
-  paste(map_ids[[x[2]]], x[1], sep = "_")
+temp$FCells =  sapply(temp$Cell, function(x) {
+   x = str_split(x, "_")[[1]]
+   paste(x[2], x[1], sep = "_")
 })
+
+
+# temp$FCells = sapply(temp$Cells, function(x) {
+#   x = str_split(x, "_")[[1]]
+#   paste(map_ids[[x[2]]], x[1], sep = "_")
+# })
 
 
 write.table(
@@ -523,22 +706,47 @@ write.table(
 )
 
 
-temp_meta = as.data.frame(temp_meta) %>%
+write.table(
+  temp[temp$CellType %in% c("CD14 mono", "CD16 mono"), c("FCells", "CellType")], "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/mono_bc.txt", 
+  quote = F, col.names = F, row.names = F, sep = "\t"
+)
+
+write.table(
+  data.frame(
+    cell = c("CD14 mono", "CD16 mono"), 
+    color = c(RColorBrewer::brewer.pal(11, "RdYlBu")[3], RColorBrewer::brewer.pal(11, "RdYlBu")[9])
+  ), "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/mono_order.txt", 
+  quote = F, col.names = F, row.names = T, sep = "\t"
+)
+
+
+group = list(
+  "lymphoid"=c("Treg", "MAIT", "naïve CD4", "Proliferative T", "γδT", "NKT", "CD8 memory", "naïve CD8", "CD8 CTL", "naïve B", "memory B", "NK", "pDC"),
+  "myeloid"=c("mDC",  "CD16 mono", "CD14 mono")
+)
+
+temp$Class = "None"
+for(i in names(group)) {
+  temp$Class[temp$CellType %in% group[[i]]] = i
+}
+
+set.seed(42)
+temp_meta = as.data.frame(temp) %>%
   group_by(Class) %>%
   sample_n(500, replace = T) %>%
   unique() %>%
   as.data.frame()
 
-temp_meta$group = str_replace_all(temp_meta$recovery_stage, "(S|M)$", "")
+# temp_meta$group = str_replace_all(temp_meta$recovery_stage, "(S|M)$", "")
 
-temp_meta$FCells = sapply(temp_meta$Cells, function(x) {
-  x = str_split(x, "_")[[1]]
-  paste(map_ids[[x[2]]], x[1], sep = "_")
-})
+# temp_meta$FCells = sapply(temp_meta$Cells, function(x) {
+#   x = str_split(x, "_")[[1]]
+#   paste(map_ids[[x[2]]], x[1], sep = "_")
+# })
 
 
 write.table(
-  temp_meta[temp_meta$Class != "None", c("FCells", "Class")], "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/cellclass_bc.txt", 
+  temp[temp$Class != "None", c("FCells", "Class")], "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/cellclass_bc.txt", 
   quote = F, col.names = F, row.names = F, sep = "\t"
 )
 
@@ -723,27 +931,69 @@ temp = markers %>%
 
 temp = obj@meta.data[!obj@meta.data$CellType %in% c("platelet", "erythroid", "HSC"), ]
 
+
+meta$recovery_stage = sapply(meta[, "recovery_stage"], function(x) {
+  id_maps = c(
+    "HNC"="NHC", "RP_S1"="PCovM", "RP_S2"="PCovS",
+    "HPC"="PHC", "RN_S1"="NCovM", "RN_S2"="NCovS"
+    )
+  
+  id_maps[[x]]
+})
+
+
 temp = meta[!meta$CellType %in% c("platelet", "erythroid", "HSC"), ]
-temp$recovery_stage = as.character(obj@meta.data[as.character(temp$Cells), "recovery_stage"])
+temp$recovery_stage = as.character(meta[as.character(temp$Cell), "recovery_stage"])
 temp$group = str_replace_all(temp$recovery_stage, "(S|M)$", "")
 
-map_ids = list()
-for (i in 1:nrow(temp)) {
-  map_ids[[as.character(temp[i, "Patient"])]] = temp[i, "recovery_stage"]
-}
+# map_ids = list()
+# for (i in 1:nrow(temp)) {
+#   map_ids[[as.character(temp[i, "Patient"])]] = temp[i, "recovery_stage"]
+# }
+
+temp$FCells =  sapply(temp$Cell, function(x) {
+   x = str_split(x, "_")[[1]]
+   paste(x[2], x[1], sep = "_")
+})
 
 for (i in unique(temp$CellType)) {
-  temp$FCells = sapply(temp$Cells, function(x) {
-    x = str_split(x, "_")[[1]]
-    paste(map_ids[[x[2]]], x[1], sep = "_")
-  })
+  # temp$FCells = sapply(temp$Cells, function(x) {
+  #   x = str_split(x, "_")[[1]]
+  #   paste(map_ids[[x[2]]], x[1], sep = "_")
+  # })
   
   write.table(
     temp[temp$CellType == i, c("FCells", "recovery_stage")], 
-    paste0("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/", str_replace_all(i, " ", "_"), "_bc.txt"), 
+    paste0("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/celltype_bc/", str_replace_all(i, " ", "_"), "_bc.txt"), 
     quote = F, col.names = F, row.names = F, sep = "\t"
   )
 }
+
+
+group = list(
+  "lymphoid"=c("Treg", "MAIT", "naïve CD4", "Proliferative T", "γδT", "NKT", "CD8 memory", "naïve CD8", "CD8 CTL", "naïve B", "memory B", "NK", "pDC"),
+  "myeloid"=c("mDC",  "CD16 mono", "CD14 mono")
+)
+
+temp$Class = "None"
+for(i in names(group)) {
+  temp$Class[temp$CellType %in% group[[i]]] = i
+}
+
+for (i in names(group)) {
+  # temp$FCells = sapply(temp$Cells, function(x) {
+  #   x = str_split(x, "_")[[1]]
+  #   paste(map_ids[[x[2]]], x[1], sep = "_")
+  # })
+  
+  write.table(
+    temp[temp$Class == i, c("FCells", "recovery_stage")], 
+    paste0("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/celltype_bc/", str_replace_all(i, " ", "_"), "_bc.txt"), 
+    quote = F, col.names = F, row.names = F, sep = "\t"
+  )
+}
+
+
 
 temp$FCells = as.character(rownames(temp))
 write.table(
@@ -1231,6 +1481,99 @@ cowplot::plot_grid(plotlist = plist, ncol = 2)
 dev.off()
 
 mcsaveRDS(so, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/seurat_obj_psi.rds")
+```
+
+
+## Cell type specific markers
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes_tobit.rds")
+
+temp = dcast(as.data.frame(markers), gene~CellType, value.var = "deltaPSI", fun.aggregate = mean, fill = 0)
+rownames(temp) <- temp$gene
+temp  = temp[, colnames(temp) != "gene"]
+
+
+Heatmap(
+  temp, name = "deltaPSI", 
+  col = colorRamp2(c(min(markers$deltaPSI), 0, max(markers$deltaPSI)), c("blue", "grey75", "red")),
+  show_row_names = F
+)
+```
+
+
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_lymphoid_myeloid.rds")
+
+temp = dcast(as.data.frame(markers), gene~comp, value.var = "deltaPSI", fun.aggregate = mean, fill = 0)
+rownames(temp) <- temp$gene
+temp  = temp[, colnames(temp) != "gene"]
+
+
+Heatmap(
+  temp, name = "deltaPSI", 
+  col = colorRamp2(c(min(markers$deltaPSI), 0, max(markers$deltaPSI)), c("blue", "grey75", "red")),
+  show_row_names = F
+)
+```
+
+## GO
+```{R fig.height=5, fig.width=8}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+
+
+go = enrichGO(
+  sapply(markers$gene[markers$comp == "myeloid - lymphoid"], function(x) {
+    str_split(x, "\\|")[[1]][1]
+  }),
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP"
+)
+
+dotplot(go)
+```
+
+
+```{r}
+go = enrichGO(
+  sapply(markers$gene[markers$comp == "CD14 mono - CD16 mono"], function(x) {
+    str_split(x, "\\|")[[1]][1]
+  }),
+  OrgDb = org.Hs.eg.db,
+  keyType = "SYMBOL",
+  ont = "BP"
+)
+
+dotplot(go)
+```
+
+
+
+## 
+```{r}
+library(clusterProfiler)
+library(org.Hs.eg.db)
+markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_stages_psi.rds")
+
+
+go = list()
+for (i in unique(markers$cell)) {
+  data = list()
+  temp = markers[markers$cell == i, ]
+  for (j in unique(temp$group)) {
+    data[[j]] = sapply(temp$gene[temp$group == j], function(x) {
+      str_split(x, "\\|")[[1]][1]
+    })
+  }
+  go[[i]] = compareCluster(
+    geneCluster = data, 
+    fun = "enrichGO", 
+    keyType="SYMBOL", 
+    OrgDb = org.Hs.eg.db,
+    ont = "BP"
+  )
+}
 ```
 
 

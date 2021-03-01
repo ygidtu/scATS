@@ -64,7 +64,7 @@ func process(conf *config) error {
 	if err != nil {
 		return errors.Wrap(err, "faild to open input bam")
 	}
-	defer ifh.Close()
+	defer ifh.Close()ƒreplac
 
 	//Create a new BAM reader with maximum
 	//concurrency:

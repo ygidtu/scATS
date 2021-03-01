@@ -1,0 +1,459 @@
+---
+title: "PBMC in mouse"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r cars}
+library(Seurat)
+library(stringr)
+library(ggplot2)
+library(ggrastr)
+library(ggpubr)
+library(harmony)
+library(ggrepel)
+```
+
+
+```{R}
+mtx = NULL
+
+for (i in list.files("/mnt/raid64/ATS/alignments/cellranger/mm", pattern = "pbmc", full.names = T)) {
+    key = str_split(basename(i), "_")[[1]]
+    
+    temp = Read10X(paste(i, "outs", "filtered_feature_bc_matrix", sep = "/"))
+    colnames(temp) = paste(key[2], key[4], colnames(temp), sep = "_")
+    
+    if (is.null(mtx)) {
+        mtx = temp
+    } else {
+        cg = intersect(rownames(mtx), rownames(temp))
+        
+        mtx = cbind(mtx[cg, ], temp[cg, ])
+    }
+}
+
+meta = data.frame(
+    Cells = colnames(mtx),
+    version = sapply(colnames(mtx), function(x) { str_split(x, "_")[[1]][1] }),
+    species = sapply(colnames(mtx), function(x) { str_split(x, "_")[[1]][2] })
+)
+
+meta$batch = as.numeric(factor(paste(meta$version, meta$species)))
+
+obj <- CreateSeuratObject(mtx, meta.data = meta)
+```
+
+
+
+```{R}
+obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
+VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+```
+
+```{r}
+obj = NormalizeData(obj)
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 2000)
+
+obj <- ScaleData(obj, features = row.names(obj))
+obj <- RunPCA(obj)
+obj <- RunHarmony(obj, group.by.vars = "batch")
+
+obj@reductions$harmony@stdev = apply(obj@reductions$harmony@cell.embeddings, 2, sd)
+
+ElbowPlot(obj, reduction = "harmony")
+```
+
+```{R}
+n_pcs = 10
+obj <- FindNeighbors(obj, dims = 1:n_pcs)
+obj <- FindClusters(obj, resolution = .9) # seq(.5, .8, .1)
+obj <- RunUMAP(obj, dims = 1:n_pcs, reduction = "harmony")
+```
+
+
+```{R fig.height=4, fig.width=5}
+DimPlot(obj, label = T)
+```
+
+```{r fig.height=8, fig.width=10}
+markers = data.frame(
+    genes = c(#HSC
+      "Cd34",
+      #B_cell
+      "Cd79a",
+      #Ery
+      "Klf1",
+      #Mast
+      "Mcpt8",
+      #Neu
+      "S100a9",
+      #T_cell
+      "Ccl5",
+      "Cd3d",
+      "Cd3e",
+      "Cd3g",
+      #DC
+      "Apoe",
+      #mono
+      "Lyz2",
+      #macro
+      "Bst2",
+      "Gpm6a"
+      ),
+    cell_id = c(
+      "HSC",
+      "B_cell",
+      "Erythrocyte",
+      "Mast_cell",
+      "Neutrophil",
+      "T_cell",
+      "T_cell",
+      "T_cell",
+      "T_cell",
+      "Dendritic_cell",
+      "Monocyte",
+      "Macrophages",
+      "neurone"
+    )
+)
+
+data = DotPlot(obj, features = markers$genes)
+data = data$data
+
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+
+
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue")
+```
+
+```{r fig.height=6, fig.width=8}
+celltype = c(
+    "0"="B_cell", 
+    "1"="B_cell", 
+    "25"="HSC",
+    "14"="T_cell",
+    "21"="T_cell",
+    "23"="T_cell",
+    "15"="Neutrophil",
+    "12"="HSC",
+    "16"="Erythrocyte",
+    "22"="Erythrocyte",
+    "4"="B_cell",
+    "6"="B_cell",
+    "7"="B_cell",
+    "8"="B_cell",
+    "24"="B_cell",
+    "18"="B_cell",
+    "20"="Macrophage",
+    "10"="DC",
+    "17"="DC",
+    "2"="Monocyte",
+    "11"="B_cell",
+    "13"="Monocyte",
+    "26"="Monocyte",
+    "27"="Monocyte",
+    "9"="Monocyte",
+    "19"="Macrophage",
+    "3"="T_cell",
+    "5"="T_cell"
+)
+
+obj@meta.data$CellType = as.character(obj@meta.data$RNA_snn_res.0.9)
+for (i in names(celltype)) {
+    obj@meta.data$CellType[obj@meta.data$CellType == i] = celltype[i]
+}
+
+
+data = DotPlot(obj, features = markers$genes, group.by = "CellType")
+data = data$data
+
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+
+
+#HSC Cd34
+#B_cell Cd79a
+#Ery Klf1
+#Mast Mcpt8
+#Neu S100a9
+#T_cell Ccl5
+#DC Apoe
+#mono Lyz2
+#macro Bst2
+
+
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+```{r fig.height=4, fig.width=5}
+DimPlot(obj, group.by = "CellType", label = T)
+```
+
+
+```{r fig.height=12, fig.width=12}
+FeaturePlot(obj, features = as.character(markers$genes))
+```
+
+
+```{r}
+temp = FindMarkers(obj, group.by = "CellType", ident.1 = c("3", "5"))
+```
+
+## AUCell
+```{R}
+library(AUCell)
+
+cells_rankings <- AUCell_buildRankings(as.matrix(obj@assays$RNA@counts))
+
+geneSets = list()
+for(i in unique(markers$cell_id)) {
+    temp = markers$genes[markers$cell_id == i]
+
+    geneSets[[i]] = as.character(temp)
+}
+
+# geneSets <- GSEABase::GeneSet(genes, setName="geneSet1") # alternative
+cells_AUC <- AUCell_calcAUC(geneSets, cells_rankings, aucMaxRank=nrow(cells_rankings)*0.05)
+
+cells_assignment <- AUCell_exploreThresholds(cells_AUC, plotHist=TRUE, nCores=1, assign=TRUE)
+```
+
+```{R fig.height=4, fig.width=4}
+selectedThresholds <- getThresholdSelected(cells_assignment)
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+
+
+auc = t(as.data.frame(getAUC(cells_AUC)))
+
+plist = list()
+for(i in names(selectedThresholds)) {
+    # if (!i %in% unique(obj@meta.data$CellType)) {
+    #     next
+    # }
+    ## UMAP
+    data = as.data.frame(umap)
+    colnames(data) <- c("UMAP1", "UMAP2")
+    data$AUC <- auc[rownames(data), i]
+    
+    if (!i %in% c("HSC", "Erythrocyte", "Mast_cell")) {
+        data$AUC[data$AUC < selectedThresholds[i]] <- 0
+    }
+
+    # print(head(data))
+    # data = data[order(data$AUC, decreasing = F), ]
+    title = i
+
+    p <- ggplot(
+        data, aes(x=UMAP1, y=UMAP2, color=AUC, alpha = 0.5)
+    ) + geom_point_rast(size = 0.1) +
+        theme_pubr() +
+        theme(
+            plot.title = element_text(hjust = 0.5, face="bold", size = 20),
+            panel.grid = element_blank(),
+            legend.position = "none",
+            axis.text = element_text(size = 12),
+            axis.title = element_text(size = 15),
+            legend.text = element_text(size = 15),
+            legend.title = element_text(size = 15)
+        ) +
+        scale_color_gradient(low = "lightgrey", high = "blue") +
+        labs(title = paste0(title, " (AUC > ", round(selectedThresholds[i], 2), ")"))
+    
+    plist[[length(plist) + 1]] = p
+}
+
+
+ggsave(
+    filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/AUC.pdf",
+    plot = cowplot::plot_grid(plotlist = plist, nrow = 3),
+    width = 12, height = 12
+)
+
+saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/seurat_obj.rds")
+saveRDS(cells_rankings, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/cells_rankings.rds")
+saveRDS(cells_assignment, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/cells_assignment.rds")
+```
+
+
+
+```{r fig.height=5, fig.width=6}
+p <- DotPlot(obj, features = markers$genes, group.by = "CellType") + coord_flip() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+
+p
+
+ggsave(
+  filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/dotplot.pdf",
+  plot = p, width = 6, height = 6
+)
+```
+
+
+```{R}
+make_cell_types_plot3 <- function(
+    coord,
+    pt.size = 0.1, 
+    alpha = 0.8,
+    text_size = 10,
+    axis_size = 18,
+    axis_title_size = 20,
+    title_size = 25,
+    group_by = "",
+    label = "cell_name",
+    title = "Cell type",
+    legend.position = "none",
+    colors = NULL
+) {
+    data = coord[, c("UMAP_1", "UMAP_2", group_by, label)]
+    colnames(data) = c("UMAP1", "UMAP2", group_by, "Label")
+    label = "Label"
+    
+    if (group_by == "") {
+        group_by = "cell"
+    }
+    
+    p <- eval(
+        parse(text=paste0(
+                "ggplot(data = data, aes(x=UMAP1, y=UMAP2, color=", group_by, ", alpha=alpha))"
+            )
+        )
+    )
+    
+    if (!is.null(label)) {
+
+        text_loc = eval(
+            parse(text=paste0("data %>% group_by(", label, ") %>% mutate(x = median(UMAP1), y = median(UMAP2)) %>% dplyr::select(x, y, ", label, ")"))
+        )
+        
+        text_loc = text_loc %>% unique() %>% as.data.frame()
+        
+        # print(text_loc)
+    }
+    
+    p <- p + geom_point_rast(aes(alpha=alpha), size = pt.size)
+    
+    if (!is.null(label)) {
+        p <- p + eval(parse(text=paste0("geom_text_repel(data = text_loc,  aes(x=x, y=y, label = ", label, "), color = \"black\", size = text_size, alpha = 1)")))
+    }
+    
+    p <- p + 
+        theme_bw() +
+        labs(
+            title = title
+        ) +
+        theme(
+            plot.title = element_text(hjust = 0.5, face="bold", size = title_size),
+            legend.position = legend.position,
+            axis.text = element_text(size = axis_size),
+            axis.title = element_text(size = axis_title_size),
+            panel.grid = element_blank(),
+            aspect.ratio=1
+        )
+    
+    if (!is.null(colors)) {
+        p <- p + scale_color_manual(values = colors)
+    }
+    p
+}
+
+
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+umap$Cell = obj@meta.data[rownames(umap), "CellType"]
+
+
+p <- make_cell_types_plot3(umap, group_by = "Cell", label = "Cell", title = "", text_size = 5)
+
+ggsave(
+    filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/cell_type_umap.pdf",
+    plot = p, width = 5, height = 5
+)
+```
+
+
+### markers between species
+```{r}
+markers = NULL
+for (i in  unique(obj@meta.data$CellType)) {
+  print(i)
+  temp = FindMarkers(obj, group.by = "species", ident.1 = rownames(obj@meta.data)[obj@meta.data$CellType == i & obj@meta.data$species == "pbmc4"], logfc.threshold = 0)
+  temp$gene = rownames(temp)
+  temp$cell = i
+  markers = rbind(markers, temp)
+}
+
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/markers_expr.rds")
+```
+
+
+## PSI
+```{R}
+mtx = NULL
+for (i in list.files("/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/", pattern = "psi", full.names = T)) {
+  key = str_split(basename(i), "_")[[1]]
+  key = paste(key[2], key[4], sep = "_")
+  
+  temp = data.table::fread(i)
+  temp = as.data.frame(temp)
+  rownames(temp) <- make.unique(temp$V1)
+  temp = temp[, colnames(temp) != "V1"]
+  colnames(temp) <- paste(key, colnames(temp), sep = "_")
+  
+  if (is.null(mtx)) {
+    mtx = temp
+  } else {
+    cr = intersect(rownames(temp), rownames(mtx))
+    mtx = cbind(mtx[cr, ], temp[cr, ])
+  }
+}
+
+meta = obj@meta.data
+
+meta$group = paste(meta$CellType, meta$species)
+meta$group = factor(meta$group)
+
+icas <- ICAS::ICASDataSetFromMatrix(round(mtx), colData = meta, design = "group")
+ICAS::psi(icas) <- as.matrix(mtx)
+```
+
+### markers between species
+```{r}
+markers = NULL
+for (i in  unique(obj@meta.data$CellType)) {
+  print(i)
+  tryCatch({
+    temp = ICAS::FindMarkers(
+    icas, 
+    group.by = "group", 
+    ident.1 = paste(i, "pbmc4"), 
+    ident.2 = paste(i, "balbc"), 
+    delta.threshold = 0, test.use = "tobit",
+    min.pct = -1
+  )
+  temp$gene = rownames(temp)
+  temp$cell = i
+  markers = rbind(markers, temp)
+  }, error = function(e) {
+    print(e)
+  })
+}
+
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/markers_psi.rds")
+```
+
+
+```{r}
+plot(density(rowSums(mtx)))
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

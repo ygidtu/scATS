@@ -110,7 +110,7 @@ def peaks(input_dir: str, peaks: str, output: str, expand: int  = 2000, n_jobs: 
             w.write("\t".join(temp) + "\n")
 
 
-def format_model(path: str):
+def format_model(path: str, shift: int = 0):
     sites = []
 
     with open(path) as r:
@@ -124,16 +124,27 @@ def format_model(path: str):
 
             site = line[0].split(":")
 
-            for i in line[4].split(","):
-                try:
-                    sites.append([site[0], int(float(i))])
-                except ValueError:
-                    continue
+            try:
+                ss = [int(float(x)) for x in line[4].split(",")]
+
+                if len(ss) % 2 == 0:
+                    mid = len(ss) // 2
+                    ss[:mid] = [x + shift for x in ss[:mid]]
+                    ss[mid:] = [x - shift for x in ss[mid:]]
+                else:
+                    mid = len(ss) // 2
+                    ss[:(mid-1)] = [x + shift for x in ss[:(mid-1)]]
+                    ss[(mid+1): ] = [x - shift for x in ss[(mid+1):]]
+
+                for i in ss:
+                    sites.append([site[0], i])
+            except ValueError:
+                continue
 
     return sites
 
 
-def model(input_dir: str, model: str, output: str, expand: int  = 2000, n_jobs: int = 10):
+def model(input_dir: str, model: str, output: str, expand: int  = 2000, n_jobs: int = 10, shift: int = 0):
     u"""
     Count the histone markers signal around peaks
 
@@ -152,7 +163,7 @@ def model(input_dir: str, model: str, output: str, expand: int  = 2000, n_jobs: 
             if f.lower().endswith("bigwig") or f.lower().endswith("bw"):
                 bws[os.path.basename(parent)] = os.path.join(parent, f)
 
-    sites = format_model(model)
+    sites = format_model(model, shift = shift)
     res  = {}
     bk =  len(sites) // n_jobs
     for key, bw in tqdm(bws.items()):

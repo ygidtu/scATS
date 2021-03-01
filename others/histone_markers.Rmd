@@ -269,7 +269,7 @@ peaks = rbind(peaks, temp)
 
 
 ```{r fig.height=4, fig.width=6}
-pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/histone_markers_mm.pdf", width = 6, height = 2)
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/histone_markers_mm.pdf", width = 6, height = 3)
 for (i in unique(peaks$cell)) {
     p <- ggplot(peaks[peaks$cell == i, ], aes(x=Var1, y=value, color=source)) +
       geom_line() +
@@ -318,17 +318,60 @@ temp = melt(as.matrix(data))
 temp$cell = "GM12878"
 temp$source = "CAGE"
 peaks = rbind(peaks, temp)
+
+
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/cell_sel_K562", sep = "\t", header = T)
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+temp = melt(as.matrix(data))
+temp$cell = "K562"
+temp$source = "Cell_filtered"
+peaks = rbind(peaks, temp)
+
+
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/cell_sel_GM12878", sep = "\t", header = T)
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+temp = melt(as.matrix(data))
+temp$cell = "GM12878"
+temp$source = "Cell_filtered"
+peaks = rbind(peaks, temp)
+
+
+
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/cell_2_K562", sep = "\t", header = T)
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+temp = melt(as.matrix(data))
+temp$cell = "K562"
+temp$source = "Cell_2"
+peaks = rbind(peaks, temp)
+
+
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/cell_2_GM12878", sep = "\t", header = T)
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+temp = melt(as.matrix(data))
+temp$cell = "GM12878"
+temp$source = "Cell_2"
+peaks = rbind(peaks, temp)
+
+
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/cell_3_GM12878", sep = "\t", header = T)
+rownames(data) = seq(-nrow(data) / 2 + 1, nrow(data)/2)
+temp = melt(as.matrix(data))
+temp$cell = "GM12878"
+temp$source = "Cell_3"
+peaks = rbind(peaks, temp)
 ```
 
 
 ```{r fig.height=4, fig.width=6}
-pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/histone_markers_cell.pdf", width = 6, height = 2)
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/histone_markers_cell.pdf", width = 6, height = 4)
 for (i in unique(peaks$cell)) {
-    p <- ggplot(peaks[peaks$cell == i, ], aes(x=Var1, y=value, color=source)) +
+    p <- ggplot(peaks[peaks$cell == i & peaks$source %in% c("CAGE", "Cell_", "Cell_3"), ], aes(x=Var1, y=value, color=source)) +
       geom_line() +
       facet_wrap(.~Var2, scales = "free") +
-      theme_pubr() +
+      ggpubr::theme_pubr() +
       labs(title = i, x = "Distance to TSS (bp)", y="Average Cov")
+      # scale_x_continuous(breaks = seq(-2000, 2000, by = 100)) +
+      # theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
     print(p)
 }
 dev.off()
@@ -367,10 +410,10 @@ data$num = sapply(data$ats_arr, function(x) {
 
 temp = as.data.frame(table(data$n))
 temp$p = temp$Freq / sum(temp$Freq) * 100
+temp$num = as.character(temp$Var1)
 
 labs <- paste0(temp$num, " (", round(temp$p, 2), "%)")
 
-temp$num = as.character(temp$Var1)
 
 p2 = ggpie(
   temp, "Freq", 
@@ -387,10 +430,9 @@ data$num = sapply(data$ats_arr, function(x) {
 
 temp = as.data.frame(table(data$n))
 temp$p = temp$Freq / sum(temp$Freq) * 100
+temp$num = as.character(temp$Var1)
 
 labs <- paste0(temp$num, " (", round(temp$p, 2), "%)")
-
-temp$num = as.character(temp$Var1)
 
 p3 = ggpie(
   temp, "Freq", 
@@ -403,6 +445,84 @@ p3 = ggpie(
 ggsave(
   filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/pie.pdf",
   width = 12, height = 4, plot = cowplot::plot_grid(p1, p2, p3, nrow = 1)
+)
+
+
+
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/overall_STAT1.txt", header = T, stringsAsFactors = F)
+data$num = sapply(data$ats_arr, function(x) {
+  length(str_split(x, ",")[[1]])
+})
+
+
+data = read.table("/mnt/raid61/Personal_data/zhangyiming/ePSI/ats/overall1.txt", header = T, stringsAsFactors = F)
+data$num = sapply(data$ats_arr, function(x) {
+  length(str_split(x, ",")[[1]])
+})
+
+
+data = read.table("/mnt/raid61/Personal_data/zhangyiming/ePSI/ats/overall_200.txt", header = T, stringsAsFactors = F)
+data$num = sapply(data$ats_arr, function(x) {
+  length(str_split(x, ",")[[1]])
+})
+
+
+write.table(data[data$num > 1 & data$num < 3, ], "/mnt/raid61/Personal_data/zhangyiming/ePSI/ats/overall_200_sel.txt", row.names = F, quote = F, sep = "\t")
+```
+
+
+```{r fig.height=4, fig.width=6}
+freq = NULL
+for (i in list.files("/mnt/raid64/ATS/Personal/zhangyiming/infered/", pattern = "txt$", full.names = T)) {
+  data = read.table(i, header = T, stringsAsFactors = F)
+
+  data$num = sapply(data$ats_arr, function(x) {
+    length(str_split(x, ",")[[1]])
+  })
+  
+  temp = as.data.frame(table(data$n))
+  temp$source = str_replace_all(basename(i), ".txt", "")
+  temp$p = temp$Freq / sum(temp$Freq) * 100
+  
+  freq = rbind(freq, temp)
+}
+
+data = read.table("/mnt/raid64/ATS/Personal/zhangyiming/overall_ATS_cage_R.txt", header = T, stringsAsFactors = F)
+
+data$num = sapply(data$ats_arr, function(x) {
+  length(str_split(x, ",")[[1]])
+})
+
+temp = as.data.frame(table(data$n))
+temp$source = "Mixed COVID-19"
+temp$p = temp$Freq / sum(temp$Freq) * 100
+
+freq = rbind(freq, temp)
+
+freq$Var1 = factor(
+  as.character(freq$Var1), 
+  levels = rev(as.character(unique(freq$Var1)))
+)
+
+
+lvls = c()
+for (i in c("PHC", "PCov", "NHC",  "NCovM", "NCovS")) {
+  lvls = c(lvls, unique(freq$source)[str_detect(unique(freq$source), i)])
+}
+
+freq$source = factor(freq$source, levels = c(lvls, "Mixed COVID-19"))
+
+p <- ggplot(freq, aes(x=source, y=p, fill=Var1))  +
+  geom_bar(stat = "identity") +
+  ggpubr::theme_pubr() +
+  labs(x = "Sample ID", y = "Fraction of UTRs (%)", fill = "Number of ATS") +
+  theme(
+    axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)
+  )
+
+ggsave(
+  filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/num_of_ATS_covid19.pdf",
+  plot = p, width = 6, height = 4
 )
 ```
 
@@ -518,6 +638,36 @@ temp$source = "Annotation"
 ggplot(temp, aes(x=Var1, y=value, color=Var2)) +
     geom_line() +
     facet_wrap(.~Var2)
+```
+
+
+
+## STRT
+```{r fig.height=5, fig.width=5}
+data = read.csv("/mnt/raid64/ATS/Personal/zhangyiming/STRT_QC/stats.csv", stringsAsFactors = F, header = F)
+
+data$align = data$V3 / data$V2
+data$not =  data$V4 / data$V3
+data$uniq = 1 - data$not
+
+temp = melt(data[, c("not", "uniq")])
+
+
+ggplot(data, aes(x=V3, y=uniq)) +
+  geom_point()
+
+
+p <- ggpubr::ggscatter(data, x="V3", y="uniq", xlab = "Number of aligned reads", ylab="Uniquely mapped (%)")
+
+ggsave(
+  filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/STRT_um.pdf",
+  plot = p, width = 5, height = 5
+)
+```
+
+
+```{r}
+VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size  = 0, group.by = "Patient")
 ```
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

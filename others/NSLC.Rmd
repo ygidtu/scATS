@@ -54,7 +54,7 @@ obj <- RunUMAP(obj, dims = 1:5)
 
 
 ```{R fig.height=4, fig.width=5}
-DimPlot(obj)
+DimPlot(obj, group.by = "CellType", label = T)
 ```
 
 

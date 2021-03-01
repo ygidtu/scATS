@@ -1,0 +1,96 @@
+---
+title: "Cell"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r include=FALSE}
+library(dplyr)
+library(reshape2)
+library(ggplot2)
+library(stringr)
+library(ggpubr)
+```
+
+
+## R Markdown
+
+```{r cars}
+load("/mnt/raid61/Personal_data/tangchao/IR6/result/Gene_Expression/Gene_Quantification/EGAD00001002671.se.RData")
+expr1 = assays(SO)[[1]]
+load("/mnt/raid61/Personal_data/tangchao/IR6/result/Gene_Expression/Gene_Quantification/EGAD00001002674.se.RData")
+expr4 = assays(SO)[[1]]
+load("/mnt/raid61/Personal_data/tangchao/IR6/result/Gene_Expression/Gene_Quantification/EGAD00001002675.se.RData")
+expr5 = assays(SO)[[1]]
+
+
+#     Mono = get(psi[["EGAD00001002674"]])
+#     Neu = get(psi[["EGAD00001002675"]])
+#     TCell = get(psi[["EGAD00001002671"]])
+```
+
+
+
+```{r pressure, echo=FALSE}
+expr = cbind(expr1, expr4)
+expr = cbind(expr, expr5)
+
+temp = melt(expr)
+
+ggplot(temp, aes(x=value)) +
+    geom_density() +
+    scale_x_log10()
+```
+
+```{R}
+rs = apply(expr, 1, function(x) { all(x > 10) })
+rownames(expr)[rs]
+
+utr <- read.table("/mnt/raid61/Personal_data/zhangyiming/ePSI/ref/genecode.v30lift37.gene_utr.bed", stringsAsFactors = F)
+utr = utr[!str_detect(utr$V4, "\\|"), ]
+utr$gene = sapply(utr$V4, function(x) { str_split(x, ";")[[1]][2] })
+
+utr = utr[utr$gene %in% rownames(expr)[rs], ]
+utr$utr = paste0(utr$V1, ":", utr$V2, "-", utr$V3, ":", utr$V6)
+```
+
+```{r}
+ats = read.table("/mnt/raid61/Personal_data/zhangyiming/ePSI/ats/overall1.txt", stringsAsFactors = F, header = T)
+ats = ats[ats$utr %in% utr$utr, ]
+```
+
+
+
+```{r}
+ats$num = sapply(ats$ats_arr, function(x) {
+  length(str_split(x, ",")[[1]])
+})
+
+temp = as.data.frame(table(ats$n))
+temp$p = temp$Freq / sum(temp$Freq) * 100
+temp$num = as.character(temp$Var1)
+
+labs <- paste0(temp$num, " (", round(temp$p, 2), "%)")
+
+p3 = ggpie(
+  temp, "Freq", 
+  label = labs,
+  fill = "num", color = "white", 
+  lab.pos = "in",
+  title = "Cell"
+)
+
+p3
+```
+
+```{r}
+write.table(ats[ats$num == 2, ], "/mnt/raid61/Personal_data/zhangyiming/ePSI/ats/overall2.txt", row.names = F, quote = F, sep = "\t")
+```
+
+
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

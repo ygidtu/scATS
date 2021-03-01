@@ -85,9 +85,13 @@ function main()
             en = exons[1]
         end
 
+        site = en.Strand == "+" ? en.Start : en.End
+
         # collect the exon closest to utr region
         bed = Genomic.BED(
             Chrom = en.Chrom, Start = max(1, en.Start - expand), End = en.End + expand,
+            # Start = site - expand,
+            # End = site + expand,
             Name = join([
                 get(en.Attributes, "gene_biotype", "unknown"), 
                 en.GeneID, en.TranscriptID, 
@@ -121,3 +125,16 @@ end
 
 main()
 
+
+#=
+src = ""
+o = ""
+with open(o, "w+") as w:
+    with open(src) as r:
+        for line in r:
+            line = line.split()
+            site = line[1].split(":")
+            pos = site[1].split("-")
+
+            w.write(f"{site[0]}\t{pos[0]}\t{pos[1]}\t{line[0]}\t{line[1]}\t{site[2]}\n")
+=#
