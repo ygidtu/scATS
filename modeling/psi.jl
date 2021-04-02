@@ -3,6 +3,7 @@ using CSV
 using DataFrames
 using Memento
 using ProgressMeter
+using RCall
 
 
 function load_group(path::String)
@@ -13,7 +14,7 @@ function load_group(path::String)
 
             line = split(strip(line), "\t")
 
-            res[line[2]] = line[3]
+            res[line[1]] = line[2]
         end
     end
 
@@ -25,23 +26,29 @@ function main(data::String, group::String, output::String)
     logger = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
 
     info(logger, "load  quant data")
-    data = CSV.read(data, DataFrame)
+    data = rcopy(R"""readRDS($data)""") # CSV.read(data, DataFrame)
 
     info(logger, "load group")
     group = load_group(group)
+    # println(group)
+
+    # println(data)
 
     # first get sum
     rowSums = Dict(x => Dict() for x = keys(group))
     colnames = names(data)
-    colnames = colnames[2:length(colnames)]
+    colnames = colnames[1:length(colnames)]
+    colnames = filter(x -> endswith(x, "SJ_out"),colnames)
 
     p = Progress(size(data)[1], 1, "Computing sums...")
-    Threads.@threads for row in eachrow(data)
-        rowname = row.Column1
+    Threads.@threads for idx in rownumber.(eachrow(data))
+        rowname = string(idx) # row.Column1
         next!(p)
         if !haskey(group, rowname)
             continue
         end
+
+        row = data[idx, :]
         
         key = group[rowname]
         if !haskey(rowSums, key)
@@ -50,6 +57,8 @@ function main(data::String, group::String, output::String)
         for colname = colnames
             val = row[Symbol(colname)]
             try
+                # println(val)
+                # println(get(rowSums[key], colname, 0))
                 rowSums[key][colname] = val + get(rowSums[key], colname, 0)
             catch e
                 rowSums[key] = Dict()
@@ -65,13 +74,15 @@ function main(data::String, group::String, output::String)
         write(w, string(",",  join(colnames, ","), "\n"))
 
         p = Progress(size(data)[1], 1, "Computing sums...")
-        Threads.@threads for row in eachrow(data) # 
-            rowname = row.Column1
+        Threads.@threads for idx in rownumber.(eachrow(data)) # 
+            rowname = string(idx) # row.Column1
             next!(p)
 
             if !haskey(group, rowname)
                 continue
             end
+
+            row = data[idx, :]
 
             key = group[rowname]
             new_row = [string(key, "|", rowname)]

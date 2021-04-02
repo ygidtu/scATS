@@ -13,7 +13,7 @@ from rich import print
 
 REFERENCE = {
     "hs": "/mnt/raid64/ATS/cellranger/ref/Homo_sapiens/",
-    "mm": "/mnt/raid64/ATS/cellranger/ref/Mus_musculus"
+    "mm": "/mnt/raid64/ATS/cellranger/ref/Mus_musculus/"
 }
 
 
@@ -45,7 +45,11 @@ def main(input_dir: str, softlinks: str, output: str):
         
         try:
             ref = REFERENCE[f.split("_")[2]]
-            check_call(f"cellranger count --id {f} --fastqs={softlinks} --transcriptome={ref} --localcores=20 --localmem=80 --sample={f}", shell=True, cwd=os.path.join(output, f.split("_")[2]))
+            cmd = f"cellranger count --id {f} --fastqs={softlinks} --transcriptome={ref} --localcores=20 --localmem=80 --sample={f}"
+            if f.split("_")[2] == "hs":
+                continue
+            print(cmd)
+            check_call(cmd, shell=True, cwd=os.path.join(output, f.split("_")[2]))
         except Exception as err:
             print(f)
             print(err)
@@ -59,13 +63,13 @@ if __name__ == '__main__':
         "/mnt/raid64/ATS/alignments/cellranger/"
     )
 
-    set bg_rgb=[1,1,1]
-    space cmyk
-    set orthoscopic, on   # turns it on
-    set ray_trace_fog=0
-    set depth_cue=0
-    util.performance(0)
-    set antialias, 4
-    png /Users/zhangyiming/Downloads/nCOV/software/500_532_N.png, width=10cm, dpi=3000, ray=1
+    # set bg_rgb=[1,1,1]
+    # space cmyk
+    # set orthoscopic, on   # turns it on
+    # set ray_trace_fog=0
+    # set depth_cue=0
+    # util.performance(0)
+    # set antialias, 4
+    # png /Users/zhangyiming/Downloads/nCOV/software/500_532_N.png, width=10cm, dpi=3000, ray=1
     
     

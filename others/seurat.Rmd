@@ -203,6 +203,14 @@ meta$recovery_stage = sapply(meta$recovery_stage, function(x) {
   id_maps[[x]]
 })
 
+mono <- trqwe::mcreadRDS("/mnt/raid64/Covid19_Gravida/rds/seurat_mono.rds")
+
+cells = colnames(mono)[colnames(mono) %in% rownames(meta)]
+meta[cells, "CellType"] = mono@meta.data[cells, "CellType"]
+
+set.seed(42)
+meta = meta[sample(1:nrow(meta), 50000, replace = F),]
+
 meta$CellType = factor(meta$CellType)
 
 
@@ -220,17 +228,22 @@ gc()
 
 
 fake_counts = mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/fake_psi_counts.rds")
+
+
+cells = intersect(colnames(fake_counts), rownames(meta))
+
 obj <- ICASDataSetFromMatrix(
-  countData = fake_counts,
-  colData = meta,
+  countData = as.matrix(fake_counts[, cells]),
+  colData = meta[cells, ],
   design = "CellType"
 )
 
 ICAS::psi(obj) <- as.matrix(psi)
 
+obj@design = "CellType"
+markers1 = ICAS::FindAllMarkers(obj, deltapsi.threshold = 0, test.use = "tobit", group.by = "CellType")
 
-markers = ICAS::FindAllMarkers(obj, logfc.threshold = 0, test.use = "tobit", group.by = "CellType")
-
+saveRDS(markers1,"/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes_tobit_celltype.rds")
 
 fake_counts = mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/fake_psi_counts.rds")
 
@@ -250,11 +263,115 @@ saveRDS(markers,"/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_betwee
 ```
 
 
+
+## New plot
+```{R fig.height=4, fig.width=12}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_stages_psi.rds")
+
+
+temp = markers[markers$cell %in% c("Inter. mono", "Non-class. mono", "Class. mono"), ]
+
+temp = temp[temp$p_val_adj < 0.05 & abs(temp$deltaPSI) > 0.1, ]
+temp$group = str_replace_all(temp$group, "-(N|P)HC", "")
+
+temp = reshape2::dcast(
+  temp, group~cell+gene, 
+  value.var = "deltaPSI", 
+  fill = 0, fun.aggregate = mean
+)
+
+rownames(temp) <- temp$group
+temp = temp[, colnames(temp) != "group"]
+
+genes = sapply(
+  colnames(temp),
+  function(x) {
+    str_split(x, "[_\\|]")[[1]][2]
+  }
+)
+
+genes = rep("grey75", length(genes))
+names(genes) = sapply(
+  colnames(temp),
+  function(x) {
+    str_split(x, "[_\\|]")[[1]][2]
+  }
+)
+
+sel_genes = c()
+for (i in c("^TNF", "^IL", "^CCR")) {
+  sel_genes = unique(c(sel_genes, names(genes)[str_detect(names(genes), i)]))
+}
+
+colors1 = as.character(wesanderson::wes_palette("Zissou1", length(sel_genes), type = "continuous"))
+names(colors1) <- sel_genes
+
+for (i in c("^TNF", "^IL", "^CCR")) {
+  for (j in names(genes)[str_detect(names(genes), i)]) {
+    genes[[j]] <- colors1[[j]]
+  }
+}
+
+
+ba = HeatmapAnnotation(
+  group = colnames(temp),
+  col = list(
+    group = sapply(colnames(temp), function(x) { 
+      x = str_split(x, "[_\\|]")[[1]][2]
+      genes[[x]] 
+    })
+  ),
+  show_legend = F,
+  show_annotation_name = F
+)
+
+
+h <- Heatmap(
+  temp[c("PCovM", "PCovS", "NCovM", "NCovS"), ],
+  name = "deltaPSI",
+  cluster_rows = F, cluster_columns = T,
+  clustering_method_columns = "ward.D2",
+  column_split = sapply(colnames(temp), function(x) {
+    str_split(x, "_")[[1]][1]
+  }),
+  show_column_names = F,
+  border = T,
+  use_raster = T,
+  bottom_annotation = ba
+)
+
+pdf("/mnt/data5/zhangyiming/biye/mono_psi.pdf", width = 12, height = 4)
+draw(h)
+dev.off()
+
+
+colors1
+
+lgd = Legend(
+  labels = names(colors1), 
+  title = "Gene", 
+  legend_gp = gpar(fill = colors1)
+)
+
+lgd2 = Legend(
+  col_fun = colorRamp2(c(-0.4, 0, 0.4), c("blue", "#EAEAEA", "red")), 
+  title = "deltaPSI", 
+  at = c(-0.4, -0.2, 0, 0.2, 0.4)
+)
+
+pdf("/mnt/data5/zhangyiming/biye/mono_psi_legend.pdf")
+draw(packLegend(lgd, lgd2, direction = "horizontal"))
+dev.off()
+
+```
+
+
+
 ### lymphoid以及myeloid之间比例
 ```{R}
 group = list(
   "lymphoid"=c("Treg", "MAIT", "naïve CD4", "Proliferative T", "γδT", "NKT", "CD8 memory", "naïve CD8", "CD8 CTL", "naïve B", "memory B", "NK", "pDC"),
-  "myeloid"=c("mDC",  "CD16 mono", "CD14 mono")
+  "myeloid"=c("mDC",  "Class. mono", "Non-class. mono", "Inter. mono")
 )
 
 
@@ -266,9 +383,14 @@ meta$recovery_stage = sapply(meta$recovery_stage, function(x) {
     "HNC"="NHC", "RP_S1"="PCovM", "RP_S2"="PCovS",
     "HPC"="PHC", "RN_S1"="NCovM", "RN_S2"="NCovS"
     )
-  
+
   id_maps[[x]]
 })
+
+mono <- trqwe::mcreadRDS("/mnt/raid64/Covid19_Gravida/rds/seurat_mono.rds")
+
+cells = colnames(mono)[colnames(mono) %in% rownames(meta)]
+meta[cells, "CellType"] = mono@meta.data[cells, "CellType"]
 
 meta$CellType = factor(meta$CellType)
 
@@ -290,6 +412,10 @@ meta$CellGroup = factor(paste(meta$CellType, meta$recovery_stage))
 
 set.seed(42)
 cells = sample(cells, round(length(cells) / 10))
+fake_counts = fake_counts[, cells]
+psi = psi[, cells]
+
+gc()
 
 obj <- ICASDataSetFromMatrix(
   countData = fake_counts[, cells],
@@ -303,7 +429,9 @@ obj@colData$CellGroup = factor(obj@colData$CellGroup)
 obj@colData$ClassGroup = factor(obj@colData$ClassGroup)
 
 
-meta = meta[cells, ]
+markers1 = ICAS::FindAllMarkers(obj, delta.threshold = 0, test.use = "tobit", group.by = "CellType")
+
+
 
 markers = NULL
 obj@design = "ClassGroup"
@@ -347,43 +475,54 @@ for (i in c("lymphoid", "myeloid")) {
 
 
 obj@design = "CellGroup"
-for (i in unique(meta$CellType)) {
+for (i in unique(obj@colData$CellType)) {
   print(i)
+  
+  if (i %in% markers$cell) {
+    next
+  }
 
   for (j in c("NCovM", "NCovS")) {
-      temp = ICAS::FindMarkers(
-        obj, 
-        ident.1 = paste(i, j),
-        ident.2 = paste(i, "NHC"),
-        delta.threshold = 0,
-        test.use = "tobit"
-      )
-      
-      if (nrow(temp) > 0) {
-        temp$gene = rownames(temp)
-        temp$group = paste(j, "NHC", sep = "-")
-        temp$cell = i
-        markers = rbind(markers, temp)
-      }
+      tryCatch({
+        temp = ICAS::FindMarkers(
+          obj, 
+          ident.1 = paste(i, j),
+          ident.2 = paste(i, "NHC"),
+          delta.threshold = 0,
+          test.use = "tobit"
+        )
+        
+        if (nrow(temp) > 0) {
+          temp$gene = rownames(temp)
+          temp$group = paste(j, "NHC", sep = "-")
+          temp$cell = i
+          markers = rbind(markers, temp)
+        }
+      }, error = function(e) {})
   }
   
   for (j in c("PCovM", "PCovS")) {
-      temp = ICAS::FindMarkers(
-        obj, 
-        ident.1 = paste(i, j),
-        ident.2 = paste(i, "PHC"),
-        delta.threshold = 0,
-        test.use = "tobit"
-      )
-      
-      if (nrow(temp) > 0) {
-        temp$gene = rownames(temp)
-        temp$group = paste(j, "PHC", sep = "-")
-        temp$cell = i
-        markers = rbind(markers, temp)
-      }
+      tryCatch({
+        temp = ICAS::FindMarkers(
+          obj, 
+          ident.1 = paste(i, j),
+          ident.2 = paste(i, "PHC"),
+          delta.threshold = 0,
+          test.use = "tobit"
+        )
+        
+        if (nrow(temp) > 0) {
+          temp$gene = rownames(temp)
+          temp$group = paste(j, "PHC", sep = "-")
+          temp$cell = i
+          markers = rbind(markers, temp)
+        }
+      }, error = function(e) {})
   }
 }
+
+
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_stages_psi.rds")
 ```
 
 
@@ -583,14 +722,14 @@ custom_fill_colors = c(
     "grey75"
 )
 names(custom_fill_colors) <- c(
-    "CD14 mono", "CD16 mono", "mDC", "pDC",
+    "Class. mono", "Non-class. mono", "mDC", "pDC",
     "naïve B", "plasma B", "memory B", "HSC",
     "naïve CD8",  "naïve CD4", "CD8 memory",
     "CD8 CTL",  "NKT", "MAIT",  
     "Treg", "NK", "γδT",
     "Proliferative T",
     "platelet", "erythroid",
-    "NA"
+    "Inter. mono"
 )
 
 
@@ -678,7 +817,14 @@ Heatmap(
 ```{r}
 # temp = obj@colData[!obj@colData$CellType %in% c("platelet", "erythroid", "HSC"), ]
 
-temp = meta[!meta$CellType %in% c("platelet", "erythroid", "HSC"), ]
+colData <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/colData.rds")
+
+
+temp = colData[!colData$CellType %in% c("platelet", "erythroid", "HSC"), ]
+
+# mono <- trqwe::mcreadRDS("/mnt/raid64/Covid19_Gravida/rds/seurat_mono.rds")
+# 
+# temp = meta[!meta$CellType %in% c("platelet", "erythroid", "HSC"), ]
 
 temp$group = str_replace_all(temp$recovery_stage, "(S|M)$", "")
 
@@ -707,14 +853,18 @@ write.table(
 
 
 write.table(
-  temp[temp$CellType %in% c("CD14 mono", "CD16 mono"), c("FCells", "CellType")], "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/mono_bc.txt", 
+  temp[temp$CellType %in% c("Class. mono", "Non-class. mono", "Inter. mono"), c("FCells", "CellType")], "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/mono_bc.txt", 
   quote = F, col.names = F, row.names = F, sep = "\t"
 )
 
 write.table(
   data.frame(
-    cell = c("CD14 mono", "CD16 mono"), 
-    color = c(RColorBrewer::brewer.pal(11, "RdYlBu")[3], RColorBrewer::brewer.pal(11, "RdYlBu")[9])
+    cell = c("Class. mono", "Non-class. mono", "Inter. mono"), 
+    color = c(
+      RColorBrewer::brewer.pal(11, "RdYlBu")[3], 
+      RColorBrewer::brewer.pal(11, "RdYlBu")[6], 
+      RColorBrewer::brewer.pal(11, "RdYlBu")[9]
+      )
   ), "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/sashimi/mono_order.txt", 
   quote = F, col.names = F, row.names = T, sep = "\t"
 )
@@ -1523,7 +1673,7 @@ library(org.Hs.eg.db)
 
 
 go = enrichGO(
-  sapply(markers$gene[markers$comp == "myeloid - lymphoid"], function(x) {
+  sapply(markers$gene[markers$comp == "myeloid - lymphoid" & markers$p_val_adj < 0.05], function(x) {
     str_split(x, "\\|")[[1]][1]
   }),
   OrgDb = org.Hs.eg.db,
@@ -1531,13 +1681,19 @@ go = enrichGO(
   ont = "BP"
 )
 
-dotplot(go)
+p <- dotplot(go)
+
+ggsave(
+  filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/myleoid_lymphoid_go.pdf",
+  height = 5, width = 8
+)
+
 ```
 
 
 ```{r}
 go = enrichGO(
-  sapply(markers$gene[markers$comp == "CD14 mono - CD16 mono"], function(x) {
+  sapply(markers$gene[markers$comp == "CD14 mono - CD16 mono" & markers$p_val_adj < 0.05], function(x) {
     str_split(x, "\\|")[[1]][1]
   }),
   OrgDb = org.Hs.eg.db,
@@ -1551,6 +1707,90 @@ dotplot(go)
 
 
 ## 
+
+```{R}
+colors = c(
+  RColorBrewer::brewer.pal(9, "RdYlGn")[c(1, 3)],
+  RColorBrewer::brewer.pal(9, "Blues")[5],
+  RColorBrewer::brewer.pal(9, "Greens")[5],
+  RColorBrewer::brewer.pal(9, "Blues")[7],
+  RColorBrewer::brewer.pal(9, "Greens")[7]
+)
+names(colors) = c("PCovS", "NCovS", "PCovM", "NCovM", "PHC", "NHC")
+
+colors1 = c(
+  RColorBrewer::brewer.pal(9, "RdYlGn")[1],
+  RColorBrewer::brewer.pal(9, "RdYlGn")[3],
+  RColorBrewer::brewer.pal(9, "Blues")[7],
+  RColorBrewer::brewer.pal(9, "Greens")[7]
+)
+names(colors1) = c("PCov", "NCov", "PHC", "NHC")
+```
+
+```{R fig.height=6, fig.width=12}
+markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_stages_psi.rds")
+
+markers = markers[markers$p_val_adj < 0.05, ]
+markers$type = "Down"
+markers$type[markers$deltaPSI > 0] = "Up"
+
+markers$gene1 = sapply(markers$gene, function(x) {
+  str_split(x, "\\|")[[1]][1]
+})
+
+temp = markers %>%
+  dplyr::select(cell, group, type, gene1) %>%
+  unique() %>%
+  group_by(cell, group, type) %>%
+  add_tally() %>%
+  dplyr::select(cell, group, type, n) %>%
+  unique() %>%
+  as.data.frame()
+
+
+temp$group = factor(
+  str_replace_all(temp$group, "-(N|P)HC", ""),
+  levels = c("PCovM", "PCovS", "NCovM", "NCovS")
+)
+
+temp$cell = factor(
+  temp$cell,
+  levels =c(
+    "Class. mono", "Inter. mono", "Non-class. mono", "mDC", "pDC",
+    "naïve B", "plasma B", "memory B", "HSC",
+    "naïve CD8",  "naïve CD4", "CD8 memory",
+    "CD8 CTL",  "NKT", "MAIT",  
+    "Treg", "NK", "γδT",
+    "Proliferative T",
+    "erythroid", "platelet"
+  )
+)
+
+temp = na.omit(temp)
+
+temp$type = factor(temp$type, levels = c("Up", "Down"))
+
+p <- ggplot(temp, aes(x=cell, fill = group, y = n, label = n)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  geom_text(position = position_dodge(width = .9), angle = 90) +
+  facet_grid(type~., scales = "free", space = "free") +
+  theme_bw() +
+  scale_fill_manual(values = colors) +
+  labs(x="", y="The number of gene") +
+  theme(
+    axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1),
+    legend.position = "top"
+  )
+
+p
+
+ggsave(
+  filename = "/mnt/data5/zhangyiming/biye/markers_between_stages_psi_bar.pdf",
+  plot = p, width = 10, height = 6
+)
+```
+
+
 ```{r}
 library(clusterProfiler)
 library(org.Hs.eg.db)
@@ -1558,9 +1798,10 @@ markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_bet
 
 
 go = list()
-for (i in unique(markers$cell)) {
+for (i in c("Class. mono", "Inter. mono", "Non-class. mono")) {
+  print(i)
   data = list()
-  temp = markers[markers$cell == i, ]
+  temp = markers[markers$cell == i & markers$p_val_adj < 0.05 & abs(markers$deltaPSI) > .1, ]
   for (j in unique(temp$group)) {
     data[[j]] = sapply(temp$gene[temp$group == j], function(x) {
       str_split(x, "\\|")[[1]][1]
@@ -1574,7 +1815,475 @@ for (i in unique(markers$cell)) {
     ont = "BP"
   )
 }
+
+saveRDS(go, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_stages_psi_go.rds")
 ```
+
+```{r}
+go_slim = list()
+for (i in names(go)) {
+  print(i)
+  go_slim[[i]] = simplify(go[[i]])
+}
+
+saveRDS(go, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_stages_psi_go_slim.rds")
+```
+
+
+```{r fig.height=8, fig.width=10}
+library(RColorBrewer)
+
+pdf("/mnt/data5/zhangyiming/biye/markers_between_stages_psi_go_slim.pdf", width = 10, height = 6)
+for (i in names(go_slim)) {
+  p <- dotplot(go_slim[[i]])
+  p = p$data
+  
+  p$Cluster = str_replace_all(p$Cluster, "-(P|N)HC*", "")
+  lvl = unique(p$Cluster)
+  lvl = c(lvl[str_detect(lvl, "^P")], lvl[str_detect(lvl, "^N")])
+  p$Cluster = factor(p$Cluster, levels = lvl)
+  
+  
+  p <- ggplot(p, aes(x=Cluster, y=Description, size = Count, color = p.adjust)) +
+    geom_point() +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(
+      high = brewer.pal(11, "RdYlBu")[10],
+      low = brewer.pal(11, "RdYlBu")[2]
+    ) + labs(title = i) +
+    theme(legend.position = c(0, 0), legend.direction = "horizontal")
+  print(p)
+}
+dev.off()
+```
+
+
+## CellType specific
+```{r}
+markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes_tobit_celltype.rds")
+
+temp = dcast(
+  markers[markers$p_val_adj < 0.05, ], 
+  gene~CellType, value.var = "deltaPSI", 
+  fill = 0, fun.aggregate = mean
+)
+
+rownames(temp) <- temp$gene
+temp = temp[, colnames(temp) != "gene"]
+
+
+Heatmap(
+  temp,
+  name = "deltaPSI",
+  cluster_columns = F,
+  show_row_names = F,
+  show_column_names = T,
+  col  = colorRamp2(c(-1, 0, 1), c("blue", "lightgrey", "red")),
+  column_names_gp = gpar(angle = 90),
+  use_raster = T
+)
+```
+
+
+```{r fig.height=4, fig.width=6}
+markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_celltypes_tobit_celltype.rds")
+
+markers$type = "Down"
+markers$type[markers$deltaPSI > 0] = "Up"
+temp = markers[markers$p_val_adj < 0.05, ] %>%
+  group_by(cluster, type) %>%
+  add_tally() %>%
+  dplyr::select(cluster, type, n) %>%
+  unique() %>%
+  as.data.frame()
+
+temp$n[temp$type == "Down"] = temp$n[temp$type == "Down"] * -1
+
+
+temp$cluster = factor(
+  temp$cluster,
+  levels =c(
+    "Class. mono", "Inter. mono", "Non-class. mono", "mDC", "pDC",
+    "naïve B", "plasma B", "memory B", "HSC",
+    "naïve CD8",  "naïve CD4", "CD8 memory",
+    "CD8 CTL",  "NKT", "MAIT",  
+    "Treg", "NK", "γδT",
+    "Proliferative T",
+    "erythroid", "platelet"
+  )
+)
+
+
+p <- ggplot(temp, aes(x=cluster, y=n, fill = type, label = abs(n))) +
+  geom_bar(stat = "identity") +
+  geom_text() +
+  ggpubr::theme_pubr() +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)) +
+  labs(x="", y="Number of ATS", fill = "") +
+  scale_fill_manual(values = c("Down"="#00AFBB", "Up"="#FC4E07")) 
+
+p
+
+
+ggsave(
+  filename = "/mnt/data5/zhangyiming/biye/markers_between_celltypes_tobit.pdf",
+  plot = p, width = 6, height = 4
+)
+```
+
+
+```{r fig.height=4, fig.width=3}
+markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_lymphoid_myeloid.rds")
+
+markers <- markers[markers$comp == "myeloid - lymphoid", ]
+
+
+ggplot(markers, aes(x=deltaPSI, y=-log10(p_val_adj))) +
+  geom_point()
+```
+
+
+```{r fig.height=4, fig.width=3}
+markers <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_stages_psi.rds")
+
+markers$group = factor(
+  str_replace_all(markers$group, "-(N|P)HC", ""),
+  levels = c("PCovM", "PCovS", "NCovM", "NCovS")
+)
+
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers_between_stages_deltapsi.pdf",  width = 3, height =  4)
+for (i in unique(markers$cell)) {
+  temp = markers[markers$cell == i & markers$p_val_adj < 0.05 & abs(markers$deltaPSI) > .1, ]
+  
+  temp = dcast(
+    temp, 
+    gene~group, value.var = "deltaPSI", 
+    fill = 0, fun.aggregate = mean
+  )
+
+  temp$gene = sapply(temp$gene, function(x) {
+    str_split(x, "\\|")[[1]][1]
+  })
+  temp = unique(temp)
+  rownames(temp) <- make.unique(temp$gene)
+  temp = temp[, colnames(temp) != "gene"]
+  
+  h = Heatmap(
+    temp,
+    name = "deltaPSI",
+    cluster_columns = F,
+    show_row_names = F,
+    show_column_names = T,
+    col  = colorRamp2(c(min(temp), 0, max(temp)), c("blue", "lightgrey", "red")),
+    column_names_gp = gpar(angle = 90),
+    use_raster = T,
+    column_title = i,
+    clustering_method_rows = "ward.D2"
+  )
+  draw(h)
+}
+dev.off()
+```
+
+```{r}
+rownames(ICAS::psi(obj)) <-  sapply(rownames(ICAS::psi(obj)), function(x) {
+  str_split(x, "\\|")[[1]][2]
+})
+
+GroupHeatSpot(object = obj, 
+              SJ = "X:65667711-65667712:+", 
+              low.col = "white", 
+              BamFiles = c("/mnt/raid64/ATS/Personal/zhangyiming/bams/NCovM1.bam"), 
+              geneModul = txdb, 
+              logTrans = FALSE, 
+              ignore.SEorPE = TRUE, 
+              BamPostfix = "bam", 
+              flank = 100, 
+              reduce = FALSE, 
+              rel_heights = c(1, 1, 1, 2.5), 
+              shrinkage = 40)
+```
+
+
+
+```{R}
+psi <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/raw_psi.rds")
+colnames(psi) <- str_replace_all(colnames(psi), ".psi", "")
+meta = readRDS("/mnt/raid64/Covid19_Gravida/rds/meta_rm_doublets.rds")
+meta = meta[!meta$CellType %in% c("HSC", "erythroid", "platelet"), ]
+
+cells = intersect(colnames(psi), rownames(meta))
+
+obj <- mcreadRDS("/mnt/raid64/Covid19_Gravida/rds/seurat_obj_rm_doublets_trqwe.rds")
+
+obj <- subset(obj, cells=cells)
+
+DimPlot(obj, group.by = "CellType")
+```
+
+```{r}
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 1000)
+obj <- ScaleData(obj) # vg[!vg %in% markers$gene]
+obj <- RunPCA(obj, features = VariableFeatures(obj))
+
+ElbowPlot(obj)
+```
+
+
+```{r}
+obj <- RunUMAP(obj, dims = 1:10, reduction.name = "test")
+```
+
+```{r}
+DimPlot(obj, group.by = "CellType", reduction = "test")
+
+mcsaveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/seurat_obj_sel_trqwe.rds")
+```
+
+
+```{R}
+obj <- trqwe::mcreadRDS("seurat_obj_sel_trqwe.rds")
+mono <- trqwe::mcreadRDS("/mnt/raid64/Covid19_Gravida/rds/seurat_mono.rds")
+
+cells = colnames(mono)[colnames(mono) %in% colnames(obj)]
+
+obj@meta.data[cells, "CellType"] = mono@meta.data[cells, "CellType"]
+```
+
+
+```{r}
+custom_fill_colors = c(
+    RColorBrewer::brewer.pal(9, "Blues")[c(4, 6, 8, 9)],
+    RColorBrewer::brewer.pal(9, "Greens")[4:7],
+    RColorBrewer::brewer.pal(9, "YlGn")[1],
+    RColorBrewer::brewer.pal(9, "Oranges")[c(2, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Reds")[c(1, 3, 5, 7)],
+    RColorBrewer::brewer.pal(9, "Purples")[4:6],
+    "grey75"
+)
+names(custom_fill_colors) <- c(
+    "Class. mono", "Non-class. mono", "mDC", "pDC",
+    "naïve B", "plasma B", "memory B", "HSC",
+    "naïve CD8",  "naïve CD4", "CD8 memory",
+    "CD8 CTL",  "NKT", "MAIT",  
+    "Treg", "NK", "γδT",
+    "Proliferative T",
+    "platelet", "erythroid",
+    "Inter. mono"
+)
+
+
+# names(custom_fill_colors) <- sort(unique(obj@meta.data$CellType))
+umap = as.data.frame(obj@reductions$test@cell.embeddings)
+colnames(umap) <- c("UMAP_1",  "UMAP_2")
+umap$X2 = obj@meta.data[rownames(umap), "CellType"]
+umap$group = as.character(obj@meta.data[rownames(umap), "recovery_stage"])
+umap = umap[!umap$X2 %in% c("HSC", "platelet", "erythroid"), ]
+
+
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/cell_types_expr.pdf", width  = 6, height = 6)
+make_cell_types_plot3(
+    umap,  
+    group_by = "X2", 
+    label = "X2",
+    title = "",
+    legend.position = "none",
+    text_size = 5,
+    colors = custom_fill_colors
+)
+dev.off()
+```
+
+```{R}
+obj <- trqwe::mcreadRDS("seurat_obj_psi.rds")
+mono <- trqwe::mcreadRDS("/mnt/raid64/Covid19_Gravida/rds/seurat_mono.rds")
+
+cells = colnames(mono)[colnames(mono) %in% colnames(obj)]
+
+obj@meta.data$CellType = as.character(obj@meta.data$CellType)
+obj@meta.data[cells, "CellType"] = mono@meta.data[cells, "CellType"]
+obj@meta.data$CellType[obj@meta.data$CellType == "CD14 mono"] = "Class. mono"
+```
+
+
+```{r}
+# names(custom_fill_colors) <- sort(unique(obj@meta.data$CellType))
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+colnames(umap) <- c("UMAP_1",  "UMAP_2")
+umap$X2 = obj@meta.data[rownames(umap), "CellType"]
+umap$group = as.character(obj@meta.data[rownames(umap), "recovery_stage"])
+umap = umap[!umap$X2 %in% c("HSC", "platelet", "erythroid"), ]
+
+
+pdf("/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/cell_types.pdf", width  = 6, height = 6)
+make_cell_types_plot3(
+    umap,  
+    group_by = "X2", 
+    label = "X2",
+    title = "",
+    legend.position = "none",
+    text_size = 5,
+    colors = custom_fill_colors
+)
+dev.off()
+```
+
+
+
+## CD16 and CD14 mono DEGs
+```{r}
+markers = NULL
+library(doMC)
+registerDoMC(4)
+obj@meta.data$temp_group = paste(obj@meta.data$CellType, obj@meta.data$recovery_stage, sep = "|")
+markers = foreach (i = c("PCovM", "PCovS", "NCovM", "NCovS"), .combine = "rbind") %dopar% {
+  ctl = "NHC"
+  if (i %in% c("PCovM", "PCovS")) {
+    ctl = "PHC"
+  }
+  
+  markers = NULL
+  for (j in c("CD16 mono", "CD14 mono")) {
+    temp = FindMarkers(
+      obj, 
+      group.by = "temp_group", 
+      ident.1 = paste(j, i, sep = "|"), 
+      ident.2 = paste(j, ctl, sep = "|"), 
+      logfc.threshold = 0
+    )
+    temp$gene = rownames(temp)
+    temp$group = i
+    temp$cell = j
+    
+    markers = rbind(markers, temp)
+  }
+
+  return(markers)
+}
+
+saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/expr_markers.rds")
+```
+
+
+```{R fig.height=4, fig.width=8}
+temp = markers[markers$p_val_adj < 0.05 & abs(markers$avg_logFC) > .25, ]
+
+temp = dcast(
+  temp, gene+cell~group, 
+  value.var = "avg_logFC", fill = 0, 
+  fun.aggregate = mean
+)
+
+
+h <- Heatmap(
+  t(temp[, c("PCovM", "PCovS", "NCovM", "NCovS")]),
+  name = "avg_logFC",
+  column_split = temp$cell,
+  clustering_method_columns = "ward.D2",
+  cluster_rows = F
+)
+
+co = column_order(h)
+
+temp = temp[c(co[["CD16 mono"]], co[["CD14 mono"]]), ]
+
+temp = rbind(
+  temp[temp$cell == "CD16 mono", ],
+  temp[temp$cell != "CD16 mono", ]
+)
+
+temp$cell = factor(temp$cell, levels = c("CD16 mono", "CD14 mono"))
+
+h <- Heatmap(
+  t(temp[, c("PCovM", "PCovS", "NCovM", "NCovS")]),
+  name = "avg_logFC",
+  column_split = temp$cell,
+  clustering_method_columns = "ward.D2",
+  cluster_rows = F,
+  cluster_columns = F,
+  border = T,
+  use_raster = T,
+  show_column_names = F,
+  col = colorRamp2(c(-1, 0, 1), c("blue", "grey75", "red"))
+)
+
+pdf("avg_logFC_heat.pdf", width = 8, height = 4)
+draw(h)
+dev.off()
+```
+
+
+
+```{R fig.height=6, fig.width=8}
+temp = markers[markers$p_val_adj < 0.05 & abs(markers$avg_logFC) > .25, ]
+
+go = list()
+for (i in c("CD16 mono", "CD14 mono")) {
+  gene = list()
+  for (j in unique(temp$group)) {
+    gene[[j]] = temp$gene[temp$cell == i & temp$group == j]
+  }
+  
+  go[[i]] = compareCluster(
+    geneCluster = gene, 
+    fun = "enrichGO", 
+    keyType="SYMBOL", 
+    OrgDb = org.Hs.eg.db,
+    ont = "BP"
+  )
+}
+
+
+pdf("expr_go.pdf", width = 8, height = 6)
+for(i in names(go)) {
+  p <- dotplot(go[[i]]) + labs(title = i)
+  print(p)
+}
+dev.off()
+
+```
+
+
+```{r fig.height=6, fig.width=9}
+markers <- read.xlsx("/mnt/raid64/Covid19_Gravida/cluster.xlsx", rowNames = T) # _20210104
+
+markers <- markers[
+  c(
+    "CD79A", "MS4A1", "MZB1", "CD3E", "CD4",  "CD8A", "CCR7", "SELL", "FOXP3",
+    "TRAV1-2", "TRGV9", "TRDV2", "MKI67", "GPR183", "GZMK",
+    "GZMA", "GZMB", "GNLY", "PRF1", "NKG7", "LYZ",  "CD14", "FCGR3A", "CD1C",
+    "CLEC4C", "PPBP"
+  ),
+  c("naïve.B", "memory.B", "plasma.B", 
+    "naïve.CD4", "naïve.CD8", "Treg", "MAIT", "γδT",
+    "Proliferative.T", "CD8.memory", "CD8.CTL", "NKT",      
+    "NK", "CD14.mono",
+    "CD16.mono", "mDC", "pDC")
+]
+
+
+obj@meta.data$CellType = factor(
+    as.character(obj@meta.data$CellType), 
+    levels = c("naïve B", "memory B", "plasma B", 
+      "naïve CD4", "naïve CD8", "Treg", "MAIT", "γδT",
+      "Proliferative T", "CD8 memory", "CD8 CTL", "NKT",      
+      "NK", "Class. mono", "Inter. mono",
+      "Non-class. mono", "mDC", "pDC"
+  )
+)
+
+p <- DotPlot(obj, group.by = "CellType", features = rownames(markers), dot.scale = 8) +
+    theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)) 
+
+p
+
+ggsave(
+  filename = "/mnt/raid64/ATS/Personal/zhangyiming/quant/R_sel/markers.pdf",
+  plot = p, width = 9, height = 6  
+)
+```
+
+
 
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

@@ -18,7 +18,7 @@ using StatsBase
 include(joinpath(@__DIR__, "src", "genomic.jl"))
 
 
-function load_bed(input_file::String)
+function load_bed(input_file::String; ws::Float64 = 0.0, min_ats::Int = 0)
     beds = Dict{String, String}()
 
     open(input_file, "r") do r
@@ -53,6 +53,13 @@ function load_bed(input_file::String)
 
             chrom, start_pos, end_pos = site[1], parse(Int, site[2]), parse(Int, site[3])
             alpha = split(line[5], ",")
+            ws_arr = parse.(Float64, split(line[2], ","))
+
+            alpha = [y for (x, y) = zip(ws_arr, alpha) if x > ws]
+
+            if length(alpha) < min_ats
+                continue
+            end
 
             if length(alpha) > 0
                 try
@@ -118,15 +125,22 @@ function load_utr(utr::String)::Dict{String, String}
 end
 
 
-function main(input_file::String, utr::String, output::String)
+function main(input_file::String, utr::String, output::String; ws::Float64 = 0.0, bed::Bool = false, min_ats::Int = 0)
 
-    beds = load_bed(input_file)
+    beds = load_bed(input_file, ws=ws, min_ats=min_ats)
     utr = load_utr(utr)
 
     open(output, "w+") do w
         for (key, val) = beds
             if haskey(utr, val)
-                write(w, string(val, "\t", key, "\t", utr[val], "\n"))
+                if bed
+                    site = split(val, ":")
+                    
+                    write(w, string(site[1], "\t", replace(site[2], "-"=>"\t"), "\t", key, "\t", utr[val], "\t", site[3], "\n"))
+
+                else
+                    write(w, string(val, "\t", key, "\t", utr[val], "\n"))
+                end
             end
         end
     end
@@ -149,6 +163,17 @@ function parse_commandline()
             help = "Prefix of output file"
             arg_type = String
             required = true
+        "--ws", "-w"
+            help = "threshold of ws"
+            arg_type = Float64
+            default = 0.0
+        "--bed", "-b"
+            help = "output in bed format"
+            action = :store_true
+        "--min-ats"
+            help = "only the UTR contains ats >= this nubmer will output after fitlering"
+            arg_type = Int
+            default = 0
     end
 
     return parse_args(s)
@@ -158,4 +183,4 @@ end
 args = parse_commandline()
 
 
-main(args["input"], args["utr"], args["output"])
+main(args["input"], args["utr"], args["output"], ws=args["ws"], bed=get(args, "bed", false), min_ats = get(args, "min-ats", 0))
