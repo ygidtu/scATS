@@ -12,6 +12,7 @@ from typing import Optional, List
 import click
 import pysam
 
+from ats.io import load_utr
 from logger import log, init_logger
 
 
@@ -39,7 +40,8 @@ class ATSParams(object):
         
         :params bam: path to bam files or list of bams
         """
-        self.utr = utr
+        log.info("Load UTR")
+        self.utr = load_utr(utr)
         self.bam = self.check_path(bam)
         self.n_max_ats = n_max_ats
         self.n_min_ats = n_min_ats
@@ -193,7 +195,7 @@ def inference(
         fixed_inference_flag = fixed_inference
     )
 
-    print(params)
+    print(len(params.utr))
     pass
 
 

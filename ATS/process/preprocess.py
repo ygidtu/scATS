@@ -10,15 +10,15 @@ import gzip
 
 from rich.progress import Progress, track
 
-from src.region import GTF
+from src.loci import GTF
 
 
 def process(gtf: str, output: str, span: int = 500):
     u"""
     extract utr from gtf file
-    :params gtf: path to gtf file
-    :params output: path to output file
-    :params span: the radius of UTR
+    :param gtf: path to gtf file
+    :param output: path to output file
+    :param span: the radius of UTR
     :return None
     """
     output = os.path.abspath(output)
