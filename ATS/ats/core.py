@@ -5,9 +5,11 @@ Modified at 2021.04.25 by Zhang
 
 Core ATS model
 """
-import math
-
 from __future__ import annotations
+
+import math
+import json
+
 from functools import lru_cache, reduce
 from typing import List, Tuple
 
@@ -623,10 +625,10 @@ class AtsModel(object):
         self.n_max_ats = n_max_ats  # maximum number of ATS sites
         self.n_min_ats = n_min_ats  # minimum number of ATS sites
 
-        # information for all DNA fragments, must be n_frag x 1 vector if specified
-        self.st_arr = st_arr  # l, start location of each DNA fragment, from 5' to 3'on the 5'-UTR
-
         self.L = utr_length  # length of UTR region
+
+        # information for all DNA fragments, must be n_frag x 1 vector if specified
+        self.st_arr = [x for x in st_arr if 0 <= x < utr_length]  # l, start location of each DNA fragment, from 5' to 3'on the 5'-UTR
 
         # fragment size information
         self.mu_f = mu_f  # fragment length mean
@@ -642,7 +644,7 @@ class AtsModel(object):
 
         # fragment number
         self.n_frag = len(self.st_arr)
-        assert self.n_frag == len(self.st_arr) f"self.n_frag ({self.n_frag}) != len(self.st_arr) (l{len(self.st_arr)});"
+        assert self.n_frag == len(self.st_arr), f"self.n_frag ({self.n_frag}) != len(self.st_arr) (l{len(self.st_arr)});"
 
         # initialize and other info
         self.step_size = 5
@@ -652,6 +654,37 @@ class AtsModel(object):
 
         self.pos_infinite = float("inf")
         self.neg_infinite = float('-inf')
+
+    def dump(self, path: str):
+        u"""
+        dump this model to json
+        :param path: path to json
+        """
+
+        res = {}
+        for i in dir(self):
+            if i.startswith("__"):
+                continue
+
+            if "function" in str(type(getattr(self, i))) or "method" in str(type(getattr(self, i))):
+                continue
+            
+            res[str(i)] = getattr(self, i)
+
+        print(res)
+        with open(path, "w+") as w:
+            json.dump(res, w, indent = 4)
+
+    @classmethod
+    def load(cls, path: str):
+        u"""
+        restore model from json file
+        """
+        with open(path) as r:
+            data = json.loads(r)
+        
+        return cls(**data)
+
 
     def cal_z_k(self, para, k, log_zmat):
         # K = len(ws) - 1  # last component is uniform component
@@ -793,7 +826,7 @@ class AtsModel(object):
             log_zmat = self.cal_z_k(para, k, log_zmat)
 
         for i in range(self.nround):
-            log.debug('iteration=', i + 1, '  lb=', lb)
+            log.debug(f'iteration={i + 1}  lb={lb}')
 
             # E-Step
             log_zmat = self.cal_z_k(para, k_arr[i], log_zmat)
@@ -819,10 +852,10 @@ class AtsModel(object):
             log.debug(f'Converge in  {i + 1} iterations. lb={lb}')
 
         bic = AtsModel.cal_bic(log_zmat, Z)
-        log.debug("bic=", bic)
-        log.debug('estimated ws:  ', np.around(para.ws, decimals=2))
-        log.debug("estimated alpha: ", np.around(para.alpha_arr, decimals=2))
-        log.debug("estimated beta: ", np.around(para.beta_arr, decimals=2))
+        log.debug(f"bic={bic}")
+        log.debug(f'estimated ws: {np.around(para.ws, decimals=2)}')
+        log.debug(f"estimated alpha: {np.around(para.alpha_arr, decimals=2)}")
+        log.debug(f"estimated beta: {np.around(para.beta_arr, decimals=2)}")
 
         # nd = len(lb_arr)
         # if nd >= 3:
@@ -856,6 +889,7 @@ class AtsModel(object):
         if n_ats <= len(peaks):
             return np.random.choice(peaks, size=n_ats, replace=False, p=peaks_ws)
         else:
+            print(len(peaks), n_ats)
             mu = np.random.choice(peaks, size=n_ats - len(peaks), replace=True, p=peaks_ws)
             mu = np.sort(np.concatenate((peaks, mu)))
             shift = np.rint(np.random.normal(loc=0, scale=5 * self.step_size, size=n_ats))
@@ -936,6 +970,8 @@ class AtsModel(object):
 
 
     def run(self):
+        if not self.st_arr:
+            return None
         if self.max_beta < self.step_size:
             raise Exception("max_beta=" + str(self.max_beta) + " step_size=" + str(self.step_size) +
                             ", max_beta has to be greater than step_size!")
@@ -966,3 +1002,6 @@ class AtsModel(object):
 
         return res
 
+
+if __name__ == '__main__':
+    pass

@@ -5,8 +5,9 @@ Created at 2021.04.25 by Zhang
 
 Dedifned genomic loci object
 """
+import pysam
 
-from typing import Optional
+from typing import List, Optional
 
 
 class Region(object):
@@ -274,14 +275,14 @@ class Reads(Region):
         :param name: reads name
         :param strand: strand
         :param is_read1: as name says
-        :param cigar: cigar tuples, detailes see pysam.AlignmentSegment
+        :param cigar: cigar tuples, detailes see pysam.AlignedSegment
         :param paired: SE -> None, PE -> pointer to paired reads 
         """
 
-        super(Region, self).__init__(ref, start, end, strand)
+        super(Reads, self).__init__(ref, start, end, strand)
 
         self.name = name
-        self.is_read1 = 
+        self.is_read1 = is_read1
 
         self.paired = None
 
@@ -295,15 +296,15 @@ class Reads(Region):
         v.paired = self
 
     @classmethod
-    def create(cls, record: pysam.AlignmentSegment, skip_qc: bool = False):
+    def create(cls, record: pysam.AlignedSegment, skip_qc: bool = False):
         u"""
-        Create Reads obj from pysam.AlignmentSegment
+        Create Reads obj from pysam.AlignedSegment
 
         :param record: as type
         :param skip_qc: skip QC filtering
         :return if qc is enabled and the records failed qc, then return None
         """
-        if record.is_unmapped or record.is_qcfail or not reord.is_proper_pair:
+        if record.is_unmapped or record.is_qcfail or not record.is_proper_pair:
             return None
 
         if record.has_tag("NH") and record.get_tag("NH") > 1:
@@ -314,16 +315,16 @@ class Reads(Region):
             start=record.reference_start + 1,
             end = record.reference_end + 1,
             strand = cls.__determine_strand__(record),
-            name = query_name,
+            name = record.query_name,
             is_read1 = record.is_read1,
             cigar = record.cigartuples
         )
 
     @staticmethod
-    def __determine_strand__(record: pysam.AlginmentSegment) -> str:
+    def __determine_strand__(record: pysam.AlignedSegment) -> str:
         u"""
-        determine the strand from pysam.AlignmentSegment
-        :param record: pysam.AlignmentSegment
+        determine the strand from pysam.AlignedSegment
+        :param record: pysam.AlignedSegment
         """
 
         if record.is_read1:

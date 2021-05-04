@@ -15,7 +15,7 @@ import pysam
 from rich.progress import Progress, track
 
 
-from src.loci import BED
+from src.loci import BED, Reads
 
 
 
@@ -40,5 +40,23 @@ def load_utr(path: str) -> List[BED]:
     return res
 
 
-def load_reads(bam: List[str], utr: BED) -> :
+def load_reads(bams: List[str], utr: BED) -> List[Reads]:
+    u"""
+    Load reads from bams files
+    :param bams: list of bam path
+    :param utr: UTR in BED object
+    :return list of Reads
+    """
+    res = []
+    for bam in bams:
+        with pysam.AlignmentFile(bam) as r:
+            for record in r.fetch(utr.chromosome, utr.start, utr.end):
+                record = Reads.create(record)
+                if record and record.strand == utr.strand:
+                    res.append(record)
 
+    return res
+
+
+if __name__ == '__main__':
+    pass

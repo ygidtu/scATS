@@ -7,12 +7,17 @@ Contians all the parameters and command line params handler
 """
 import math
 
+from multiprocessing import Pool
 from typing import Optional, List
 
 import click
 import pysam
 
-from ats.io import load_utr
+from rich import print
+from rich.progress import track
+
+from ats.io import load_utr, load_reads
+from ats.core import AtsModel
 from logger import log, init_logger
 
 
@@ -46,14 +51,14 @@ class ATSParams(object):
         self.n_max_ats = n_max_ats
         self.n_min_ats = n_min_ats
         self.utr_length = utr_length
-        self.muf_f = mu_f
+        self.mu_f = mu_f
         self.sigma_f = sigma_f
         self.min_ws = min_ws
         self.min_ws = min_ws
         self.max_unif_ws = max_unif_ws
         self.max_beta = max_beta
         self.fixed_inference_flag = fixed_inference_flag
-        self.st_arr = []
+
 
     @staticmethod
     def check_path(bams: List[str]) -> List[str]:
@@ -81,6 +86,47 @@ class ATSParams(object):
             res.append(f"- {i}: {getattr(self, i)}")
 
         return "\n".join(res)
+
+    @staticmethod
+    def __format_reads_to_relative__(reads: List, utr) -> List[int]:
+        u"""
+        format list of reads into start site array
+        """
+        st_arr = []
+
+        utr_site = utr.start if utr.strand == "+" else utr.end
+
+        for r in reads:
+            site = r.start if utr.strand == "+" else r.end
+            st_arr.append(abs(site - utr_site))
+
+        return st_arr
+
+
+    def get_model(self, idx: int, bams: List[str]):
+        u"""
+        get model by index
+        :param idx: the idx of utr
+        """
+        if idx < len(self.utr):
+            reads = load_reads(bams, self.utr[idx])
+            st_arr = self.__format_reads_to_relative__(reads, self.utr[idx])
+            print(st_arr)
+            # print(len(reads))
+            m = AtsModel(
+                n_max_ats=self.n_max_ats,
+                n_min_ats=self.n_min_ats,
+                st_arr=st_arr,
+                utr_length=self.utr_length,
+                mu_f=self.mu_f,
+                sigma_f=self.sigma_f,
+                min_ws=self.min_ws,
+                max_unif_ws=self.max_unif_ws,
+                max_beta=self.max_beta,
+                fixed_inference_flag=self.fixed_inference_flag
+            )
+
+            return m
 
 
 @click.command()
@@ -146,6 +192,7 @@ class ATSParams(object):
 @click.option(
     "--fixed-inference",
     is_flag=True,
+    default = True,
     type=click.BOOL,
     help=""" Inference with fixed parameters. """
 )
@@ -195,8 +242,13 @@ def inference(
         fixed_inference_flag = fixed_inference
     )
 
-    print(len(params.utr))
-    pass
+    for i in track(range(10)):
+
+        m = params.get_model(i, bams=bams)
+        print(m)
+        m.dump("test.json")
+        res = m.run()
+   
 
 
 
