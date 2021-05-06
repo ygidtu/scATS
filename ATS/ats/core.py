@@ -604,6 +604,28 @@ class Parameters:
         outstr += '-' * 30 + '\n'
         return outstr
 
+    @classmethod
+    def keys(cls) -> List[str]:
+        res = []
+        for i in cls.__init__.__code__.co_varnames:
+            if i.startswith("_") or i == "title" or i == "self":
+                continue
+
+            res.append(str(i))
+        return res
+
+    def to_res_str(self):
+        res = []
+        for i in self.keys():
+            val = getattr(self, i)
+
+            if "ndarray" in str(type(val)) or "list" in str(type(val)):
+                val = ",".join([str(x) for x in val])
+            else:
+                val = str(val)
+            res.append(val)
+        return "\t".join(res)
+
 
 # ats mixture model inference
 # using a class
@@ -655,25 +677,22 @@ class AtsModel(object):
         self.pos_infinite = float("inf")
         self.neg_infinite = float('-inf')
 
+    def dumps(self) -> Dict:
+        res = {}
+        for i in self.__init__.__code__.co_varnames:
+            if i == "self":
+                continue
+            res[str(i)] = getattr(self, "L" if i == "utr_length" else i)
+        return res
+
     def dump(self, path: str):
         u"""
         dump this model to json
         :param path: path to json
         """
 
-        res = {}
-        for i in dir(self):
-            if i.startswith("__"):
-                continue
-
-            if "function" in str(type(getattr(self, i))) or "method" in str(type(getattr(self, i))):
-                continue
-            
-            res[str(i)] = getattr(self, i)
-
-        print(res)
         with open(path, "w+") as w:
-            json.dump(res, w, indent = 4)
+            json.dump(self.dumps(), w, indent = 4)
 
     @classmethod
     def load(cls, path: str):
@@ -681,7 +700,7 @@ class AtsModel(object):
         restore model from json file
         """
         with open(path) as r:
-            data = json.loads(r)
+            data = json.load(r)
         
         return cls(**data)
 
@@ -713,6 +732,9 @@ class AtsModel(object):
         return ws
 
     def mstep(self, para, Z, k):
+        u"""
+
+        """
         alpha_arr = para.alpha_arr
         beta_arr = para.beta_arr
 
@@ -725,6 +747,11 @@ class AtsModel(object):
 
         para.ws = self.maximize_ws(Z)
 
+        # log.debug(f"tmp_sumk={tmp_sumk}; k={k}; Z.shape={Z.shape}")
+        u"""
+        2020.05.06 Here, 
+        para.alpha_arr is an empry list, but try to set value by index
+        """
         alpha_arr[k] = np.sum(Z[:, k] * self.st_arr) / tmp_sumk
 
         tmp_beta = math.sqrt(np.sum(Z[:, k] * ((self.st_arr - alpha_arr[k]) ** 2)) / tmp_sumk)
@@ -814,6 +841,9 @@ class AtsModel(object):
 
     # perform inference for K components
     def em_algo(self, para, fixed_inference_flag=False):
+        u"""
+        Call mstep and msted_fixed
+        """
         lb = self.neg_infinite
         lb_arr = []
         N = self.n_frag
@@ -886,10 +916,11 @@ class AtsModel(object):
         peaks = x_arr[peak_inds]
         peaks_ws = y_arr[peak_inds] / sum(y_arr[peak_inds])
 
+        # log.debug(f"n_ats={n_ats}; len(peaks)={len(peaks)}")
+
         if n_ats <= len(peaks):
             return np.random.choice(peaks, size=n_ats, replace=False, p=peaks_ws)
         else:
-            print(len(peaks), n_ats)
             mu = np.random.choice(peaks, size=n_ats - len(peaks), replace=True, p=peaks_ws)
             mu = np.sort(np.concatenate((peaks, mu)))
             shift = np.rint(np.random.normal(loc=0, scale=5 * self.step_size, size=n_ats))
@@ -906,6 +937,7 @@ class AtsModel(object):
     def init_para(self, n_ats):
         # alpha_arr = np.random.choice(self.st_arr, size=n_ats, replace=True)
         alpha_arr = self.sample_alpha(n_ats)
+        # log.debug(f"alpha_arr inited: {alpha_arr}")
         beta_arr = np.random.choice(self.predef_beta_arr, size=n_ats, replace=True)
         ws = self.init_ws(n_ats)
 
@@ -968,8 +1000,7 @@ class AtsModel(object):
         label_arr = np.argmax(Z, axis=1)
         return label_arr
 
-
-    def run(self):
+    def run(self) -> Parameters:
         if not self.st_arr:
             return None
         if self.max_beta < self.step_size:
@@ -985,8 +1016,6 @@ class AtsModel(object):
         self.unif_log_lik = self.lik_f0(log=True)
 
         for i, n_ats in enumerate(range(self.n_max_ats, self.n_min_ats - 1, -1)):
-            # print()
-            # print(20 * '*' + ' k = ' + str(n_ats) + ' ' + 20 * '*')
             res = self.em_optim0(n_ats)
             res_list.append(res)
             bic_arr[i] = res.bic

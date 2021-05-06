@@ -5,19 +5,22 @@ Created at 2021.04.25 by Zhang
 
 Contians all the parameters and command line params handler
 """
+import gzip
+import json
 import math
+import os
 
-from multiprocessing import Pool
+from multiprocessing import cpu_count, JoinableQueue, Process, Queue
 from typing import Optional, List
 
 import click
 import pysam
 
 from rich import print
-from rich.progress import track
+from rich.progress import Progress
 
 from ats.io import load_utr, load_reads
-from ats.core import AtsModel
+from ats.core import AtsModel, Parameters
 from logger import log, init_logger
 
 
@@ -59,7 +62,6 @@ class ATSParams(object):
         self.max_beta = max_beta
         self.fixed_inference_flag = fixed_inference_flag
 
-
     @staticmethod
     def check_path(bams: List[str]) -> List[str]:
         u"""
@@ -87,6 +89,13 @@ class ATSParams(object):
 
         return "\n".join(res)
 
+    def __iter__(self):
+        for i in range(len(self.utr)):
+            yield i
+
+    def __len__(self):
+        return len(self.utr)
+
     @staticmethod
     def __format_reads_to_relative__(reads: List, utr) -> List[int]:
         u"""
@@ -97,22 +106,28 @@ class ATSParams(object):
         utr_site = utr.start if utr.strand == "+" else utr.end
 
         for r in reads:
-            site = r.start if utr.strand == "+" else r.end
-            st_arr.append(abs(site - utr_site))
+            if utr.start <= r.start <= r.end <= utr.end:
+                site = r.start if utr.strand == "+" else r.end
+                st_arr.append(site - utr_site if utr.strand == "+" else utr_site - site)
 
         return st_arr
 
+    def keys(self) -> List[str]:
+        res = ["utr", "reference_id", "reference_name", "infered_sites"]
+        res += Parameters.keys()
+        return res
 
-    def get_model(self, idx: int, bams: List[str]):
+    def get_model(self, idx: int):
         u"""
         get model by index
         :param idx: the idx of utr
         """
         if idx < len(self.utr):
-            reads = load_reads(bams, self.utr[idx])
+            reads = load_reads(self.bam, self.utr[idx])
             st_arr = self.__format_reads_to_relative__(reads, self.utr[idx])
-            print(st_arr)
-            # print(len(reads))
+            if len(st_arr) <= 1:
+                return None
+  
             m = AtsModel(
                 n_max_ats=self.n_max_ats,
                 n_min_ats=self.n_min_ats,
@@ -127,37 +142,101 @@ class ATSParams(object):
             )
 
             return m
+        return None
+
+    def format_res(self, idx: int, res: Parameters) -> str:
+        u"""
+        as name says format ATS model results to meaningful str
+        """
+        utr = self.utr[idx]
+        site = utr.start if utr.strand == "+" else utr.end
+
+        sites = [str(site + x if utr.strand == "+" else site - x) for x in res.alpha_arr]
+
+        data = [
+            f"{utr.chromosome}:{utr.start}-{utr.end}:{utr.strand}",
+            utr.id,
+            utr.name,
+            ",".join(sites),
+            res.to_res_str()
+        ]
+        return "\t".join(data)
+
+    def run(self, idx: int, m: AtsModel) -> Optional[str]:
+        u"""
+        Factory function to execute the ATS model and format results
+        """
+        if m:
+            res = m.run()
+            if res:
+                return self.format_res(idx, res)
+        return None
+
+
+def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params: ATSParams):
+    u"""
+    Multiprocessing consumer to perform the ATS core function
+    :param input_queue: multiprocessing.Queue to get the index
+    :param output_queue: multiprocessing.Queue to return the results
+    :param params: the parameters for ATS model
+    """
+
+    while True:
+        idx = input_queue.get()
+
+        if idx is None:
+            log.debug(f"{os.getpid()} existing")
+            break
+        log.debug(f"{os.getpid()} processing {idx}")
+        m = params.get_model(idx)
+        res = None
+        try:
+            res = params.run(idx, m)
+        except Exception as err:
+            output_queue.put(None)
+            error_queue.put(m.dumps())
+            log.error(err)
+        finally:
+            input_queue.task_done()
+            output_queue.put(res)
 
 
 @click.command()
 @click.option(
     "--utr",
     type=click.Path(exists = True),
-    help=""" The path to utr file, bed format """
+    required=True,
+    help=""" The path to utr file, bed format. """
+)
+@click.option(
+    "-o", "--output",
+    type=click.Path(),
+    required=True,
+    help=""" The path to output file. """
 )
 @click.option(
     "--n-max-ats",
     type=click.IntRange(1, math.inf),
     default = 5,
-    help=""" The maximum number of ATSs in same UTR """
+    help=""" The maximum number of ATSs in same UTR. """
 )
 @click.option(
     "--n-min-ats",
-    type=click.IntRange(0, math.inf),
-    default = 0,
+    type=click.IntRange(1, math.inf),
+    default = 1,
     help=""" The minimum number of ATSs in same UTR. """
 )
 @click.option(
     "--utr-length",
     type=int,
     default = 1000,
-    help=""" The length of UTR """
+    help=""" The length of UTR. """
 )
 @click.option(
     "--utr-length",
     type=int,
     default = 1000,
-    help=""" The estimate length of gene """
+    help=""" The estimate length of gene. """
 )
 @click.option(
     "--mu-f",
@@ -200,11 +279,18 @@ class ATSParams(object):
     "-d", "--debug",
     is_flag=True,
     type=click.BOOL,
-    help=""" Enable debug mode. """
+    help=""" Enable debug mode to get more debugging information. """
 )
-@click.argument("bams", nargs = -1, type=click.Path(exists=True))
+@click.option(
+    "-p", "--processes",
+    type=click.IntRange(1,cpu_count()),
+    default = 1,
+    help=""" How many cpu to use. """
+)
+@click.argument("bams", nargs = -1, type=click.Path(exists=True), required=True)
 def inference(
     utr: str,
+    output: str,
     n_max_ats: int, 
     n_min_ats: int,
     utr_length: int,
@@ -214,7 +300,9 @@ def inference(
     max_unif_ws: float,
     max_beta: int,
     fixed_inference: bool,
-    debug: bool, bams: List[str],
+    processes: int,
+    debug: bool, 
+    bams: List[str],
 ):
     u"""
     Inference
@@ -224,9 +312,6 @@ def inference(
     """
 
     init_logger("DEBUG" if debug else "INFO")
-
-    if not bams:
-        log.error("")
 
     params = ATSParams(
         utr = utr,
@@ -242,14 +327,57 @@ def inference(
         fixed_inference_flag = fixed_inference
     )
 
-    for i in track(range(10)):
+    # init queues
+    input_queue = JoinableQueue()
+    output_queue = Queue()
+    error_queue = Queue()
 
-        m = params.get_model(i, bams=bams)
-        print(m)
-        m.dump("test.json")
-        res = m.run()
-   
+    # generate consumers
+    consumers = []
+    for _ in range(processes):
+        p = Process(
+            target=consumer, 
+            args=(
+                input_queue, 
+                output_queue,
+                error_queue,
+                params,
+            )
+        )
+        p.daemon = True
+        p.start()
+        consumers.append(p)
 
+    for i in params:
+        input_queue.put(i)
+    
+    with Progress() as progress:
+        task = progress.add_task("Computing...", total=len(params))
+        with open(output, "w+") as w:
+            header = '\t'.join(params.keys())
+            w.write(f"{header}\n")
+
+            while not progress.finished:
+                res = output_queue.get()
+                # print("res", res)
+                if res:
+                    w.write(f"{res}\n")
+
+                progress.update(task, advance = 1)
+
+    # join to wait consumers finished
+    input_queue.join()
+
+    # kept the error data for further debugging
+    errors = []
+    while not error_queue.empty():
+        res = error_queue.get()
+        errors.append(res)
+    if errors:
+        with gzip.open(f"{output}.error_data.json.gz", "wt+") as w:
+            json.dump(errors, w, indent = 4)
+
+    log.info("DONE")
 
 
 if __name__ == '__main__':
