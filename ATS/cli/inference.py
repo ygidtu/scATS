@@ -10,16 +10,16 @@ import json
 import math
 import os
 
-from multiprocessing import cpu_count, JoinableQueue, Process, Queue
+from multiprocessing import cpu_count, Process, Queue
 from typing import Optional, List
 
 import click
 import pysam
 
-from rich import print
+# from rich import print
 from rich.progress import Progress
 
-from ats.io import load_utr, load_reads
+from ats.reader import load_utr, load_reads
 from ats.core import AtsModel, Parameters
 from logger import log, init_logger
 
@@ -90,7 +90,7 @@ class ATSParams(object):
         return "\n".join(res)
 
     def __iter__(self):
-        for i in range(len(self.utr)):
+        for i in range(len(self)):
             yield i
 
     def __len__(self):
@@ -197,7 +197,7 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
             error_queue.put(m.dumps())
             log.error(err)
         finally:
-            input_queue.task_done()
+            # input_queue.task_done()
             output_queue.put(res)
 
 
@@ -328,7 +328,7 @@ def inference(
     )
 
     # init queues
-    input_queue = JoinableQueue()
+    input_queue = Queue()
     output_queue = Queue()
     error_queue = Queue()
 
@@ -348,8 +348,11 @@ def inference(
         p.start()
         consumers.append(p)
 
+    # producer to assign task
     for i in params:
         input_queue.put(i)
+        # join to wait consumers finished
+        # input_queue.join()
     
     with Progress() as progress:
         task = progress.add_task("Computing...", total=len(params))
@@ -358,15 +361,11 @@ def inference(
             w.write(f"{header}\n")
 
             while not progress.finished:
-                res = output_queue.get()
-                # print("res", res)
+                res = output_queue.get(block=True, timeout=None)
                 if res:
                     w.write(f"{res}\n")
 
                 progress.update(task, advance = 1)
-
-    # join to wait consumers finished
-    input_queue.join()
 
     # kept the error data for further debugging
     errors = []
