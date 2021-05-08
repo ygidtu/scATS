@@ -80,9 +80,9 @@ def consumer(
                         ids.append(iso_tbl.get(i))
 
                 if ws:
-                    res.append(f"{r.to_str()}\t{gene_id}\t{','.join(ids)}\t{','.join(ws)}\n")
+                    res.append(f"{r.to_str()}\t{gene_id}\t{','.join(ids)}\t{','.join(ws)}")
                 else:
-                    res.append(f"{r.to_str()}\t{gene_id}\t.\t.\n")
+                    res.append(f"{r.to_str()}\t{gene_id}\t.\t.")
         except Exception as err:
             log.exception(err)
             print(utr)
@@ -158,6 +158,7 @@ def isoform(
     """
 
     init_logger("DEBUG" if debug else "INFO")
+    log.info("Isoform inference")
 
     gtf = GTFUtils(gtf)
     ats = load_ats(ats)
@@ -196,9 +197,8 @@ def isoform(
             
             while not progress.finished:
                 res = output_queue.get(block=True, timeout=None)
-                if res:
-                    w.write("\n".join(res))
-
+                [w.write(i + "\n") for i in res]
+                
                 progress.update(task, advance = 1)
     log.info("DONE")
 

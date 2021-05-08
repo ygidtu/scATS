@@ -7,9 +7,10 @@ Comand line handlers
 """
 import click
 
-from cli.inference import inference
+from cli.ats import ats
 from cli.preprocess import preprocess
 from cli.isoform import isoform
+# from cli.test import test
 
 VERSION = "0.0.1-alpha"
 LABEL = "scATS"
@@ -36,6 +37,6 @@ def cli():
 
 
 cli.add_command(preprocess)
-cli.add_command(inference)
+cli.add_command(ats)
 cli.add_command(isoform)
-
+# cli.add_command(test)

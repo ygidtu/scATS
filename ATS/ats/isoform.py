@@ -12,6 +12,7 @@ from typing import Dict, List, Tuple
 
 import numpy as np
 import pysam
+from rich import print
 
 try:
     from logger import log
@@ -88,6 +89,7 @@ def build_tree(isowins_list: List[WinList]):
 
     # each element is an aligned WinList of the same window across different isoforms
     alignwins_list = [WinList(wins) for wins in zip(*isowins_list)]
+
     return dfs(0, len(alignwins_list))
 
 
@@ -214,8 +216,7 @@ def proc_isoform(ats_pos: int, iso_wins: WinList):
     # step 1.2: if no  => merge [max(0, ats-50), min(ats+200, exon_start)] with the nearest first exon
     ats_win = Window(ats_pos, ats_pos + 1)
     i = 0
-
-    while iso_wins[i] << ats_win:
+    while i < len(iso_wins) and iso_wins[i] << ats_win:
         i += 1
     if i > 0:  # ATS is after the first exon
         return None
@@ -246,6 +247,11 @@ def get_read_relative_pos(iso_wins_list: List[WinList], r1_wins_list: List[WinLi
     atom_isowins_list = []
     for iso_wins in iso_wins_list:
         atom_isowins_list.append(map_iso_to_gene(iso_wins, all_win_on_gene))
+
+    # Modified by Zhang at 2021.05.08
+    # some cases the iso_wins cannot map to gene
+    if len(atom_isowins_list) < 1:
+        return None, None
 
     # build the tree
     tree = build_tree(atom_isowins_list)
@@ -307,6 +313,11 @@ def assign_isoform(ats_pos: int, iso_wins_list: List[WinList], r1_wins_list: Lis
 
     # get relative positions of the reads on each isoform
     read_st_mat, read_en_mat = get_read_relative_pos(iso_wins_list, r1_wins_list, r2_wins_list, read_labels)
+
+    # Modified by Zhang at 2021.05.08
+    # check whether failed to get relative positions
+    if read_st_mat is None and read_en_mat is None:
+        return np.zeros(n_orig_iso, dtype='float')
 
     # assign each pair-end read to different isoforms
     n_frag, n_iso = read_st_mat.shape
@@ -373,7 +384,7 @@ class GTFUtils(object):
         u"""
         init the obj with path to gtf file
         """
-        assert os.path.exists(path), "%s not exists" % path
+        assert os.path.exists(path), f"{path} not exists"
         path = os.path.abspath(path)
 
         self.gtf = self.index_gtf(path)

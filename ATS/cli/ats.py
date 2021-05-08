@@ -287,7 +287,7 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     help=""" How many cpu to use. """
 )
 @click.argument("bams", nargs = -1, type=click.Path(exists=True), required=True)
-def inference(
+def ats(
     utr: str,
     output: str,
     n_max_ats: int, 
@@ -311,6 +311,7 @@ def inference(
     """
 
     init_logger("DEBUG" if debug else "INFO")
+    log.info("ATS inference")
 
     params = ATSParams(
         utr = utr,
