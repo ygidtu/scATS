@@ -9,7 +9,7 @@ import click
 
 from cli.inference import inference
 from cli.preprocess import preprocess
-
+from cli.isoform import isoform
 
 VERSION = "0.0.1-alpha"
 LABEL = "scATS"
@@ -37,4 +37,5 @@ def cli():
 
 cli.add_command(preprocess)
 cli.add_command(inference)
+cli.add_command(isoform)
 

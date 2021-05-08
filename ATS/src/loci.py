@@ -5,9 +5,9 @@ Created at 2021.04.25 by Zhang
 
 Dedifned genomic loci object
 """
-import pysam
-
 from typing import List, Optional
+
+import pysam
 
 
 class Region(object):
@@ -78,6 +78,16 @@ class Region(object):
                 end = max(self.end, other.end)
             )
 
+    def is_cover(self, other, tolerance: int = 3) -> bool:
+        u"""
+        check whether this region is covered another region
+        :params tolerance: how many mismatch is allowed
+        """
+        if self.chromosome != other.chromosome or self.strand != other.strand:
+            return False
+
+        return self.start - tolerance <= other.start <= other.end <= self.end + tolerance
+        
 
 class GTF(Region):
     u"""
@@ -215,6 +225,9 @@ class BED(Region):
     def __str__(self) -> str:
         return f"{self.chromosome}\t{self.start}\t{self.end}\t{self.id}\t{self.name}\t{self.strand}"
 
+    def __len__(self) -> int:
+        return self.end - self.start
+
     @classmethod
     def create(cls, bed: str):
         u"""
@@ -248,6 +261,8 @@ class BED(Region):
             strand=strand
         )
         
+    def to_str(self) -> str:
+        return f"{self.chromosome}:{self.start}-{self.end}:{self.strand}"
 
 class Reads(Region):
     u"""
@@ -283,8 +298,8 @@ class Reads(Region):
 
         self.name = name
         self.is_read1 = is_read1
-
         self.paired = None
+        self.cigar = cigar
 
     def set_paired(self, v):
         u"""
@@ -304,11 +319,12 @@ class Reads(Region):
         :param skip_qc: skip QC filtering
         :return if qc is enabled and the records failed qc, then return None
         """
-        if record.is_unmapped or record.is_qcfail or not record.is_proper_pair:
-            return None
+        if not skip_qc:
+            if record.is_unmapped or record.is_qcfail or not record.is_proper_pair:
+                return None
 
-        if record.has_tag("NH") and record.get_tag("NH") > 1:
-            return None
+            if record.has_tag("NH") and record.get_tag("NH") > 1:
+                return None
 
         return cls(
             ref=record.reference_id,
@@ -360,7 +376,7 @@ class Reads(Region):
 
         skipped_code = (1, 2, 4, 5)
         
-        for i, j in record.cigartuples:
+        for i, j in self.cigar:
 
             if i not in skipped_code:
                 pos += j
@@ -372,7 +388,6 @@ class Reads(Region):
         pos_list.append(self.end)
 
         return pos_list
-
 
 
 if __name__ == '__main__':

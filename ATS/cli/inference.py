@@ -9,19 +9,16 @@ import gzip
 import json
 import math
 import os
-
-from multiprocessing import cpu_count, Process, Queue
-from typing import Optional, List
+from multiprocessing import Process, Queue, cpu_count
+from typing import List, Optional
 
 import click
 import pysam
-
+from ats.core import AtsModel, Parameters
+from ats.reader import load_reads, load_utr
+from logger import init_logger, log
 # from rich import print
 from rich.progress import Progress
-
-from ats.reader import load_utr, load_reads
-from ats.core import AtsModel, Parameters
-from logger import log, init_logger
 
 
 class ATSParams(object):
@@ -123,7 +120,9 @@ class ATSParams(object):
         :param idx: the idx of utr
         """
         if idx < len(self.utr):
+            # only use R1
             reads = load_reads(self.bam, self.utr[idx])
+            reads = list(reads.keys())
             st_arr = self.__format_reads_to_relative__(reads, self.utr[idx])
             if len(st_arr) <= 1:
                 return None

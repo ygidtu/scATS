@@ -5,11 +5,10 @@ Created at 2021.04.25 by Zhang
 
 Functions used to extract utr from gtf file
 """
-import os
 import gzip
+import os
 
 from rich.progress import Progress, track
-
 from src.loci import GTF
 
 

@@ -5,26 +5,28 @@ Created at 2021.05.06 by Zhang
 
 This script contains the function to infer isoforms
 """
-import numpy as np
 import os
-import pysam
 import re
-
+from functools import lru_cache, reduce
 from typing import Dict, List, Tuple
 
-from rich import print
+import numpy as np
+import pysam
 
 try:
     from logger import log
-    from ats.reader import load_ats
-    from src.convert import Coordinate
+    from src.convert import Coordinate, TreeNode, Window, WinList
     from src.loci import BED
+
+    from ats.reader import load_ats
 except ImportError:
-    from convert import Coordinate
+    from convert import Coordinate, TreeNode, Window, WinList
     from loci import BED
+
     from reader import load_ats
     pass
 
+np.seterr(divide='ignore', invalid='ignore')
 
 #################### CODE STRUCTURE #######################
 # Part 1: Isoform mapping, tree construction
@@ -33,171 +35,6 @@ except ImportError:
 
 ################### Part 1: Isoform mapping #####################################
 
-class Window:
-    DEL_VAL = 1 << 31
-
-    def __init__(self, start: int = DEL_VAL, end: int = DEL_VAL):
-        """
-        :type start: int
-        :type end: int
-        """
-        self.start = start
-        self.end = end
-
-    def __key(self) -> Tuple[int, int]:
-        return self.start, self.end
-
-    def __hash__(self):
-        return hash(self.__key())
-
-    def is_empty(self):
-        return self.start == self.end
-
-    def __bool__(self):
-        return self.start != Window.DEL_VAL
-
-    def __len__(self):
-        return self.end - self.start
-
-    def __str__(self):
-        return f'{self.start}  {self.end}  {len(self)}'
-
-    #################### window vs window -> bool #####################
-    def __lshift__(self, other):
-        return self.end <= other.start
-
-    def __lt__(self, other):
-        return self.start < other.start < self.end < other.end
-
-    def __le__(self, other):
-        return other.start <= self.start and self.end <= other.end
-
-    def __eq__(self, other):
-        if isinstance(other, Window):
-            return self.start == other.start and self.end == other.end
-        else:
-            return False
-
-    def __ge__(self, other):
-        return self.start <= other.start and other.end <= self.end
-
-    def __gt__(self, other):
-        return other.start < self.start < other.end < self.end
-
-    def __rshift__(self, other):
-        return other.end <= self.start
-
-    # overlap
-    def __ne__(self, other):
-        return not (other.end <= self.start or self.end <= other.start)
-
-    # adjacent
-    def adj(self, other):
-        return self.end == other.start or self.start == other.end
-
-    #################### window vs point operation #####################
-    # if a point falls within the window
-    def __contains__(self, point):
-        if self.is_empty():
-            return False
-        return self.start <= point < self.end
-
-    def shift_start(self, start):
-        if self.start == Window.DEL_VAL:
-            return self
-        else:
-            return Window(start, start + self.end - self.start)
-
-
-class WinList(list):
-    def __init__(self, *args, is_sorted=False):
-        super().__init__(*args)
-        self.is_sorted = is_sorted
-
-    def __str__(self):
-        return "\n".join(['start  end  length'] + [str(w) for w in self.__iter__()])
-
-    def append(self, __object: Window) -> None:
-        super().append(__object)
-        self.is_sorted = False
-
-    def rm_empty_win(self):
-        return WinList([w for w in self if w], is_sorted=self.is_sorted)
-
-    def sort(self) -> None:
-        if not self.is_sorted:
-            super().sort(key=lambda win: (win.start, win.end))
-            self.is_sorted = True
-
-    def rm_duplicate(self):
-        res = WinList(set(self))
-        res.sort()
-        return res
-
-    # merge overlapping windows
-    def merge(self):
-        winlist = self.rm_empty_win()
-        assert len(winlist) > 0
-        if not winlist.is_sorted:
-            winlist.sort()
-        res_list = WinList([winlist[0]])
-        for win in winlist:
-            curr_win = res_list[-1]  # note that windows are sorted first by start, then by end
-            if curr_win.start <= win.start <= curr_win.end:
-                res_list[-1] = Window(curr_win.start, win.end)
-            else:
-                res_list.append(win)
-        res_list.is_sorted = True
-        return res_list
-
-    # split the winList into tiny non-overlapping intervals, including regions that are not covered
-    # e.g. [(0,3), (2,4), (6,8)] => [(0,2), (2,3), (3,4), (4,6), (6,8)]
-    def split(self):
-        winlist = self.rm_empty_win()
-        if len(winlist) == 0:
-            return winlist
-        if not winlist.is_sorted:
-            winlist.sort()
-        boarder = set()
-        for win in winlist:
-            if not win:
-                continue
-            boarder.add(win.start)
-            boarder.add(win.end)
-        boarder_arr = sorted(list(boarder))
-        winlist = [Window(i, j) for i, j in zip(boarder_arr, boarder_arr[1:])]
-        return WinList(winlist, is_sorted=True)
-
-    # return the left most position of the windows list
-    # mainly for building trees, note that there may be Empty windows in this list, non-empty windows are sorted
-    def get_left(self):
-        for win in self:
-            if win.start != Window.DEL_VAL:
-                return win.start
-        return Window.DEL_VAL
-
-    # return the right most position of the windows list
-    def get_right(self):
-        for win in reversed(self):
-            if win.end != Window.DEL_VAL:
-                return win.end
-        return Window.DEL_VAL
-
-    def get_range(self):
-        return Window(self.get_left(), self.get_right())
-
-
-class TreeNode:
-    def __init__(self, left=None, right=None, winlist: WinList = WinList()):
-        """
-        :type left: TreeNode
-        :type right: TreeNode
-        :type winlist: a list of windows, each
-        """
-        self.left = left
-        self.right = right
-        self.winlist = winlist  # ith window corresponds to range of this tree node
-
 
 def map_iso_to_gene(iso_list: WinList, gene_list: WinList):
     """
@@ -205,8 +42,13 @@ def map_iso_to_gene(iso_list: WinList, gene_list: WinList):
     :param gene_list: smallest windows across isoforms by intersecting all exons of all isoforms on the gene
     :return: a WinList (same size as gene_list), with indexes relative to the isoform (local index)
     """
-    assert iso_list.is_sorted
-    assert gene_list.is_sorted
+    if not iso_list.is_sorted:
+        iso_list.sort()
+    
+    if not gene_list.is_sorted:
+        gene_list.sort()
+    assert iso_list.is_sorted, "iso list is not sorted"
+    assert gene_list.is_sorted, "gene list is not sorted"
     res_win_list = WinList()
     curr_exon_j = 0  # jth exon on isoform
     local_iso_index = 0
@@ -372,6 +214,7 @@ def proc_isoform(ats_pos: int, iso_wins: WinList):
     # step 1.2: if no  => merge [max(0, ats-50), min(ats+200, exon_start)] with the nearest first exon
     ats_win = Window(ats_pos, ats_pos + 1)
     i = 0
+
     while iso_wins[i] << ats_win:
         i += 1
     if i > 0:  # ATS is after the first exon
@@ -482,6 +325,7 @@ def assign_isoform(ats_pos: int, iso_wins_list: List[WinList], r1_wins_list: Lis
     post_prob_mat[short_frag_inds, 1:] = tmpmat / np.sum(tmpmat, axis=1)[:, np.newaxis]
 
     iso_post_prob = np.sum(post_prob_mat, axis=0)
+
     iso_post_prob = iso_post_prob / np.sum(iso_post_prob)  # 对应于该ATS的各isoform比例
 
     res_post_prob = np.zeros(n_orig_iso, dtype='float')
@@ -719,14 +563,13 @@ class GTFUtils(object):
                             )
                             
                     except IndexError as err:
-                        # log.error(err)
-                        print(err)
+                        log.error(err)
+                        # print(err)
 
                 # if there are multiple genes at same utr, just give up
                 if len(gene_ids) > 1:
-                    return res
+                    return None
 
-        
                 # 2nd round iteration by transcripts to retrive all exons of transcript
                 for t in transcripts:
                     exons = []
@@ -743,177 +586,15 @@ class GTFUtils(object):
                                 ))
 
                         except IndexError as err:
-                            # log.error(err)
-                            print(err)
+                            log.error(err)
+                            # print(err)
 
                     res[t] = exons
         except ValueError as err:
             log.warn(err)
+            return None
         return Coordinate(gene = gene_records[list(gene_ids)[0]], isoforms = res)
 
 
-def extract_from_cigar_string(record: pysam.AlignedSegment, mode:str=""):
-    u"""
-    extract junctions from cigar string
-
-    M	BAM_CMATCH	0
-    I	BAM_CINS	1
-    D	BAM_CDEL	2
-    N	BAM_CREF_SKIP	3
-    S	BAM_CSOFT_CLIP	4
-    H	BAM_CHARD_CLIP	5
-    P	BAM_CPAD	6
-    =	BAM_CEQUAL	7
-    X	BAM_CDIFF	8
-    B	BAM_CBACK	9
-
-    IGV only skip S and I
-
-    :param record: SAMSegment
-    :return:
-    """
-    pos = record.reference_start + 1
-    pos_list = []
-
-    skipped_code = (1, 2, 4, 5)
-    
-    modes = {
-        "star": (2, 5, 6),
-        "igv": (1, 4),
-        "none": ()
-    }
-
-    skipped_code = modes.get(mode, skipped_code)
-
-    for i, j in record.cigartuples:
-
-        if i not in skipped_code:
-            pos += j
-
-        if i == 3:
-            pos_list.append(pos - j)
-            pos_list.append(pos - 1)
-    
-    return pos_list
-
-
-def assign_reads(reads, transcripts:Dict):
-    res = []
-
-    introns = extract_from_cigar_string(reads)
-
-    if introns:
-        for key, exons in transcripts.items():
-            for i in range(0, len(introns), 2):
-                for j in range(0, len(exons), 2):
-                    if abs(introns[i] - exons[j].end) < 3 and abs(introns[i+1] - exons[j+1].start) < 3:
-                        res.append(key)
-                        continue
-
-                    if exons[j].start > introns[i] + 3:
-                        break
-    else:
-
-        for key, exons in transcripts.items():
-            for e in exons:
-                if e.start <= reads.reference_start and e.end >= reads.reference_end:
-                    res.append(key)
-    return res
-
-
-
-
-def main(input_file: str, gtf: str, bam:str, ats_pos = 1400, mu_frag = 350, sd_frag = 50):
-    u"""
-    获取ATS
-
-    按照ATS拉取范围内的transcripts。按照transcripts的范围拉取属于自己的exons
-
-    按照ATS的范围拉取reads
-
-    修格式导入就完了
-    """
-
-    gtf = GTFUtils(gtf)
-
-    ats = load_ats(input_file)
-    print(len(ats))
-    # BED("1", 11969, 14309, "+")
-    for utr, region in ats.items():
-        iso_tbl = gtf.read_transcripts(utr)
-        # print(iso_tbl.ids)
-        # print(iso_tbl.relative)
-        iso_tbl.set_bams([bam])
-        print([str(x) for x in region])
-        for r in region:
-            temp = iso_tbl.reads(r)
-
-            print("reads:", temp)
-        break
-
-        # if not iso_tbl:
-        #     continue
-        
-        # for iso in region:
-        #     reads = load_reads(bam, iso, iso_tbl)
-
-        #     print(f"region = {iso}; num_of_iso = {len(iso_tbl)}; num_of_reads = {len(reads)}")
-        #     if len(iso_tbl) > 0 and len(reads["label"]) > 0:
-        #         r1_tbl = reads["R1"]
-        #         r2_tbl = reads["R2"]
-
-        #         # break all isoforms into atomic non-overlapping windows
-        #         # exons and the transcript id
-        #         all_wins = WinList([Window(row.start, row.end) for row in chain.from_iterable(iso_tbl.values())])
-        #         all_win_on_gene = all_wins.split()
-
-        #         # map all isoforms to the gene (atomic non-overlapping windows)
-        #         iso_wins_list = []
-        #         for i in iso_tbl.values():
-        #             tmp_wins = WinList([Window(row.start, row.end) for row in i])
-        #             tmp_wins.sort()
-        #             iso_wins_list.append(map_iso_to_gene(tmp_wins, all_win_on_gene))
-
-        #         # 需要提前将reads assign到某条转录本上
-        #         for key in iso_tbl.keys():
-        #             r1_wins_list = [WinList([Window(e[1], e[2]),]) for e in r1_tbl if e[0] == key]
-        #             r2_wins_list = [WinList([Window(e[1], e[2]), ]) for e in r2_tbl if e[0] == key]
-        #             read_labels = [1 for e in r1_tbl if e[0]==1]
-
-        #             res = assign_isoform(ats_pos, iso_wins_list, r1_wins_list, r2_wins_list, read_labels, mu_frag, sd_frag)
-        #             print(f'map_rate={res[0]}')
-        #             print(f'iso_weights={res[1]}')
-
-        #         break
-        
-
-
-# estimate the proportion of different isoforms given an ATS
-def infer(data, ats_pos, valid_frag_inds):
-    mu_frag = data.mu_f
-    sd_frag = data.sigma_f
-    min_frag_len = 200
-
-    r1_wins_list = [data.r1_list[i] for i in valid_frag_inds]
-    r2_wins_list = [data.r2_list[i] for i in valid_frag_inds]
-    read_labels = [data.frag_label[i] for i in valid_frag_inds]
-
-    iso_wins_list = data.iso_wins_list
-
-    iso_ws = assign_isoform(ats_pos, iso_wins_list, r1_wins_list, r2_wins_list, read_labels, mu_frag, sd_frag, min_frag_len=min_frag_len)
-    iso_ws = np.around(iso_ws[1:], decimals=3)  # remove weights for the first, which is the whole gene
-    novel_flag = False
-    if all(iso_ws < 1e-8):
-        novel_flag = True
-        log.debug(f'ats_pos={ats_pos} potentially support a novel isoform')
-    log.debug(f'ats_pos={ats_pos} iso_weights={iso_ws}')
-    return novel_flag, iso_ws
-
-
 if __name__ == '__main__':
-    main(
-        "/mnt/raid61/Personal_data/zhangyiming/code/afe/ATS/NCovM1",
-        "/mnt/raid64/Covid19_Gravida/cellranger/Homo_sapiens/genes/genes.gtf",
-        "/mnt/raid64/ATS/Personal/zhangyiming/bams/NCovM1.sortedByName.bam"
-    )
     pass

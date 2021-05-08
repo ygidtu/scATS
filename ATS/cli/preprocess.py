@@ -6,9 +6,7 @@ Created at 2021.04.27 by Zhang
 Contians all the parameters and command line params handler
 """
 import click
-
-from logger import log, init_logger
-
+from logger import init_logger, log
 from process.preprocess import process
 
 

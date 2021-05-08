@@ -8,11 +8,9 @@ Preprocess of UTR bed and BAM, to get the data for model
 import gzip
 import os
 import re
-
 from typing import Dict, List
 
 import pysam
-
 from rich.progress import Progress, track
 
 try:
@@ -29,40 +27,44 @@ def load_ats(path: str) -> Dict:
     """
     beds = {}
     header = True
-    with open(path) as r:
-        for line in r:
-            if header:
-                header = False
-                continue
 
-            line = line.strip().split("\t")
-            
-            site = re.split(r"[:-]", line[0])
-            # print(site)
-            strand = site[-1]
+    with Progress() as progress:
+        task_id = progress.add_task(f"Reading {os.path.basename(path)}", total=os.path.getsize(path))
 
-            if strand != "+":
-                strand = "-"
-            chrom, start_pos, end_pos = site[0], int(site[1]), int(site[2])
+        with open(path) as r:
+            for line in r:
+                if header:
+                    header = False
+                    continue
+                progress.update(task_id, advance=len(str.encode(line)))
+                line = line.strip().split("\t")
+                
+                site = re.split(r"[:-]", line[0])
+                # print(site)
+                strand = site[-1]
 
-            utr = BED(chrom, start_pos, end_pos, strand, name = line[2], record_id = line[2])
-            alpha = line[3].split(",")
+                if strand != "+":
+                    strand = "-"
+                chrom, start_pos, end_pos = site[0], int(site[1]), int(site[2])
 
-            if len(alpha) > 1:
-                if utr not in beds.keys():
-                    beds[utr] = []
-                try:
-                    for x in alpha:
-                        if x != "":
-                            s = int(float(x))
-                            
-                            if strand == "+":
-                                beds[utr].append(BED(chrom, s, s + 1, strand, line[0], str(len(beds) + 1))) 
-                            else:
-                                beds[utr].append(BED(chrom, s - 1, s, strand, line[0], str(len(beds) + 1)))
-                except Exception as e:
-                    print(e)
-                    pass
+                utr = BED(chrom, start_pos, end_pos, strand, name = line[2], record_id = line[2])
+                alpha = line[3].split(",")
+
+                if len(alpha) > 1:
+                    if utr not in beds.keys():
+                        beds[utr] = []
+                    try:
+                        for x in alpha:
+                            if x != "":
+                                s = int(float(x))
+                                
+                                if strand == "+":
+                                    beds[utr].append(BED(chrom, s, s + 1, strand, line[0], str(len(beds) + 1))) 
+                                else:
+                                    beds[utr].append(BED(chrom, s - 1, s, strand, line[0], str(len(beds) + 1)))
+                    except Exception as e:
+                        print(e)
+                        pass
 
     return beds
 
@@ -88,43 +90,36 @@ def load_utr(path: str) -> List[BED]:
     return res
 
 
-def load_reads(bams: List[str], region: BED) -> List[Reads]:
+def load_reads(bam: List[str], region: BED) -> Dict:
     u"""
-    Load reads from bams files
-    :param bams: list of bam path
-    :param region: Region in BED object
-    :return list of Reads
-    """
-    res = []
-    for bam in bams:
-        with pysam.AlignmentFile(bam) as r:
-            for record in r.fetch(region.chromosome, region.start, region.end):
-                record = Reads.create(record)
-                if record and record.strand == region.strand:
-                    res.append(record)
-
-    return res
-
-
-def load_paired_reads(bam: List[str], region: BED) -> Dict:
-    u"""
-    Load paired reads, keys -> R1; values -> R2
+    Load reads, keys -> R1; values -> R2
+    Only both R1
     """
     res = {}
     for b in bam:
+        paired = {}
         with pysam.AlignmentFile(b) as r:
             for rec in r.fetch(region.chromosome, region.start, region.end):
-
                 if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
                     continue
 
                 if rec.is_read1:
-                    mate = r.mate(rec)
                     r1 = Reads.create(rec)
-                    r2 = Reads.create(mate)
+                    if rec.query_name not in paired.keys():
+                        paired[rec.query_name] = r1
+                    else:
+                        r2 = paired.pop(rec.query_name)
+                        if r1 and r2:
+                            res[r1] = r2
+                else:
+                    r2 = Reads.create(rec)
 
-                    if r1 and r2:
-                        res[r1] = r2
+                    if rec.query_name not in paired.keys():
+                        paired[rec.query_name] = r2
+                    else:
+                        r1 = paired.pop(rec.query_name)
+                        if r1 and r2:
+                            res[r1] = r2
 
     return res
 

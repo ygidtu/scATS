@@ -7,25 +7,21 @@ Core ATS model
 """
 from __future__ import annotations
 
-import math
 import json
-
+import math
 from functools import lru_cache, reduce
 from typing import List, Tuple
 
 # setup matplotlib backend
 import matplotlib
+
 matplotlib.use("Agg")
 
-import numpy as np
 import matplotlib.pyplot as plt
-
-
+import numpy as np
+from logger import log
 from scipy import stats
 from scipy.signal import find_peaks
-
-from logger import log
-
 
 ################### Part 3: ATS mixture #####################################
 
