@@ -10,13 +10,8 @@ from typing import Dict, List, Optional, Tuple
 
 import pysam
 
-try:
-    from src.loci import BED, Reads, Region
-
-    from ats.reader import load_reads
-except ImportError:
-    from loci import BED, Reads, Region
-    from reader import load_reads
+from src.loci import BED, Reads, Region
+from src.reader import load_reads
 
 
 class Window:

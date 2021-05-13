@@ -8,88 +8,15 @@ Core ATS model
 from __future__ import annotations
 
 import json
-import math
-from functools import lru_cache, reduce
-from typing import List, Tuple
+from math import e, pi
+from typing import List
 
-# setup matplotlib backend
-import matplotlib
-
-matplotlib.use("Agg")
-
-import matplotlib.pyplot as plt
 import numpy as np
+from KDEpy import FFTKDE
 from logger import log
-from scipy import stats
 from scipy.signal import find_peaks
 
 ################### Part 3: ATS mixture #####################################
-
-# calculate the posterior probability of each DNA fragment on different isoforms
-def cal_post_prob(mu_frag_size: int, sd_frag_size: int, len_iso_mat: np.ndarray):
-    """
-    :param mu_frag_size: mean of fragment size
-    :param sd_frag_size: std of fragment size
-    :param len_iso_mat: n_frag x n_iso numpy matrix, each element is the length of DNA fragment on each isoform
-    :return: n_frag x n_iso numpy matrix, each element is the posterior of a given fragment on an isoform
-    """
-
-    def norm_pdf(x, mean, sd):
-        prob_density = (1 / (np.sqrt(2 * np.pi) * sd)) * np.exp(-0.5 * ((x - mean) / sd) ** 2)
-        return prob_density
-
-    max_arr = np.max(len_iso_mat, axis=1)
-    val_inds = max_arr > 0
-
-    prob_mat = np.zeros(len_iso_mat.shape, dtype="float")
-    prob_mat[val_inds, :] = norm_pdf(len_iso_mat[val_inds, :], mu_frag_size, sd_frag_size)
-    prob_mat[len_iso_mat == 0] = 0
-
-    prob_mat[val_inds, :] = prob_mat[val_inds, :] / np.sum(prob_mat[val_inds, :], 1)[:, np.newaxis]
-
-    return prob_mat
-
-# calculate estimated density, last component is uniform component
-def est_density(para, x_arr):
-    K = para.K
-    y_arr = np.zeros(len(x_arr))
-    for k in range(K):
-        y_arr += para.ws[k] * stats.norm(loc=para.alpha_arr[k], scale=para.beta_arr[k]).pdf(x_arr)
-    y_arr += para.ws[K] * 1 / para.L
-    return y_arr
-
-
-# plot density given by the parameters
-def plot_para(para, x_arr=None, line_style='-', color=None, label=None):
-    if x_arr is None:
-        x_arr = np.arange(para.L + 200)
-    y_arr = est_density(para, x_arr)
-    alpha_inds = np.searchsorted(x_arr, para.alpha_arr)
-
-    plt.plot(x_arr, y_arr, linestyle=line_style, label=label, color=color)
-    plt.vlines(para.alpha_arr, ymin=0, ymax=y_arr[alpha_inds], linestyle=line_style, color=color)
-
-
-# plot estimated result
-def plot_est_vs_real(est_para, real_para):
-    """
-    plot the estimated result versus
-    :param est_para: estimated parameters
-    :param real_para: ground truth parameters
-    :return:
-    """
-    x_arr = np.arange(est_para.L + 200)
-    pred_y_arr = est_density(est_para, x_arr)
-    real_y_arr = est_density(real_para, x_arr)
-
-    plt.style.use('ggplot')
-    colors = plt.rcParams['axes.prop_cycle'].by_key()['color']
-
-    plot_para(est_para, x_arr=x_arr, line_style='--', color=colors[0], label='pred')
-    plot_para(real_para, x_arr=x_arr, line_style=':', color=colors[1], label='real')
-    plt.legend(loc='best')
-
-    plt.show()
 
 
 # class for all parameters
@@ -213,14 +140,48 @@ class AtsModel(object):
         
         return cls(**data)
 
+    @classmethod
+    def normpdf(cls, x, mu, sigma, log = False):
+        u"""
+        replace scipt.stats.norm
+        It's seems have performance issues
+        """
+        u = (np.array(x)-mu)/np.abs(sigma)
+        y = (1/(np.sqrt(2 * pi) * np.abs(sigma))) * np.exp(-u * u/2)
+        return np.log(y) if log else y
 
+    @classmethod
+    def entropy(cls, mtx, base=None):
+        """ Computes entropy of label distribution. """
+
+        def __entropy__(labels, base=None):
+            n_labels = len(labels)
+
+            if n_labels <= 1:
+                return 0
+
+            probs = labels / n_labels
+            ent = 0.
+
+            # Compute entropy
+            base = e if base is None else int(base)
+
+            for i in probs:
+                if i > 0:
+                    ent -= i * log(i, base)
+
+            return ent
+
+        return np.array([__entropy__(x, base=base) for x in mtx])
+
+    # @profile
     def cal_z_k(self, para, k, log_zmat):
         # K = len(ws) - 1  # last component is uniform component
         ws = para.ws
         alpha_arr = para.alpha_arr
         beta_arr = para.beta_arr
         if k < para.K:
-            log_zmat[:, k] = np.log(ws[k]) + self.lik_l_ab(self.st_arr, alpha_arr[k], beta_arr[k], log=True)
+            log_zmat[:, k] = np.log(ws[k]) + AtsModel.normpdf(self.st_arr, alpha_arr[k], beta_arr[k])
         else:
             log_zmat[:, k] = np.log(ws[k]) + self.unif_log_lik
         return log_zmat
@@ -233,6 +194,7 @@ class AtsModel(object):
         return Z
 
     # maximize ws given Z
+    # @profile
     def maximize_ws(self, Z):
         ws = np.sum(Z, axis=0) / Z.shape[0]
         if ws[-1] > self.max_unif_ws:
@@ -240,6 +202,7 @@ class AtsModel(object):
             ws[-1] = self.max_unif_ws
         return ws
 
+    # @profile
     def mstep(self, para, Z, k):
         u"""
 
@@ -263,7 +226,7 @@ class AtsModel(object):
         """
         alpha_arr[k] = np.sum(Z[:, k] * self.st_arr) / tmp_sumk
 
-        tmp_beta = math.sqrt(np.sum(Z[:, k] * ((self.st_arr - alpha_arr[k]) ** 2)) / tmp_sumk)
+        tmp_beta = np.sqrt(np.sum(Z[:, k] * ((self.st_arr - alpha_arr[k]) ** 2)) / tmp_sumk)
 
         idx = np.searchsorted(self.predef_beta_arr, tmp_beta, side='left')
         if idx == len(self.predef_beta_arr):
@@ -276,19 +239,21 @@ class AtsModel(object):
         return para
 
     # mstep when alpha_arr and beta_arr are fixed
+    # @profile
     def mstep_fixed(self, para, Z, k):
         # avoid division by zero
         if np.sum(Z[:, k]) < 1e-8:
             Z[:, k] += 1e-8
-            Z = AtsModel.norm_z(Z)
+            Z = self.norm_z(Z)
 
         para.ws = self.maximize_ws(Z)
 
         return para
 
     @staticmethod
+    # @profile
     def elbo(log_zmat, Z):
-        lb = AtsModel.exp_log_lik(log_zmat, Z) + np.sum(stats.entropy(Z, axis=1))
+        lb = AtsModel.exp_log_lik(log_zmat, Z) + np.sum(AtsModel.entropy(Z))
         return lb
 
     # calculate the expected log joint likelihood
@@ -299,17 +264,9 @@ class AtsModel(object):
     # uniform component likelihood
     def lik_f0(self, log=False):
         if log:
-            return -math.log(self.L)
+            return -1 * np.log(self.L)
         else:
             return 1 / self.L
-
-    # p(l|alpha, beta)
-    @staticmethod
-    def lik_l_ab(l_arr, alpha, beta, log=False):
-        if log:
-            return stats.norm(loc=alpha, scale=beta).logpdf(l_arr)
-        else:
-            return stats.norm(loc=alpha, scale=beta).pdf(l_arr)
 
     # generate random k such that each K is a group and no consecutive elements are the same
     @staticmethod
@@ -349,6 +306,7 @@ class AtsModel(object):
         return res
 
     # perform inference for K components
+    # @profile
     def em_algo(self, para, fixed_inference_flag=False):
         u"""
         Call mstep and msted_fixed
@@ -391,17 +349,7 @@ class AtsModel(object):
             log.debug(f'Converge in  {i + 1} iterations. lb={lb}')
 
         bic = AtsModel.cal_bic(log_zmat, Z)
-        log.debug(f"bic={bic}")
-        log.debug(f'estimated ws: {np.around(para.ws, decimals=2)}')
-        log.debug(f"estimated alpha: {np.around(para.alpha_arr, decimals=2)}")
-        log.debug(f"estimated beta: {np.around(para.beta_arr, decimals=2)}")
 
-        # nd = len(lb_arr)
-        # if nd >= 3:
-        #     plt.plot(list(range(nd - 3)), lb_arr[3:nd])
-        #     plt.show()
-
-        # sorted_inds = sorted(range(len(alpha_arr)), key=lambda k: alpha_arr[k])
         sorted_inds = np.argsort(para.alpha_arr)
         para.alpha_arr = para.alpha_arr[sorted_inds]
         para.alpha_arr = np.rint(para.alpha_arr).astype('int')  # round to nearest integer
@@ -415,17 +363,14 @@ class AtsModel(object):
 
         return para
 
+    # @profile
     def sample_alpha(self, n_ats):
-        # bw = (5 * self.step_size) / np.std(self.st_arr)
-        # kernel = stats.gaussian_kde(self.st_arr, bw_method=bw)
-        kernel = stats.gaussian_kde(self.st_arr)
+        kernel = FFTKDE(kernel = "gaussian", bw='silverman').fit(self.st_arr)
         x_arr = np.arange(-100, self.L + 100)  # extend to include peaks in 0 or L-1
-        y_arr = kernel.pdf(x_arr)
+        y_arr = kernel.evaluate(x_arr)
         peak_inds, _ = find_peaks(y_arr)
         peaks = x_arr[peak_inds]
         peaks_ws = y_arr[peak_inds] / sum(y_arr[peak_inds])
-
-        # log.debug(f"n_ats={n_ats}; len(peaks)={len(peaks)}")
 
         if n_ats <= len(peaks):
             return np.random.choice(peaks, size=n_ats, replace=False, p=peaks_ws)
@@ -443,20 +388,18 @@ class AtsModel(object):
             ws[-1] = self.max_unif_ws
         return ws
 
+    # @profile
     def init_para(self, n_ats):
-        # alpha_arr = np.random.choice(self.st_arr, size=n_ats, replace=True)
         alpha_arr = self.sample_alpha(n_ats)
-        # log.debug(f"alpha_arr inited: {alpha_arr}")
+
         beta_arr = np.random.choice(self.predef_beta_arr, size=n_ats, replace=True)
         ws = self.init_ws(n_ats)
 
         para = Parameters(title='Initial parameters', alpha_arr=alpha_arr, beta_arr=beta_arr, ws=ws, L=self.L)
-   
-        log.debug(para)
-
         return para
 
     # remove components with weight less than min_ws
+    # @profile
     def rm_component(self, para):
         rm_inds = [i for i in range(para.K) if para.ws[i] < self.min_ws]
         if len(rm_inds) == 0:
@@ -471,18 +414,15 @@ class AtsModel(object):
         para = self.fixed_inference(para)
         return para
 
+    # @profile
     def em_optim0(self, n_ats):
         n_trial = 5
         lb_arr = np.full(n_trial, self.neg_infinite)
         bic_arr = np.full(n_trial, self.pos_infinite)
-        res_list = list()
+        res_list = []
 
         for i in range(n_trial):
-
-            log.debug(f'K={n_ats} | i_trial={i + 1} | n_trial={n_trial}')
             para = self.init_para(n_ats)
-
-            log.debug(para)
 
             res_list.append(self.em_algo(para))
 
@@ -493,10 +433,10 @@ class AtsModel(object):
         res = res_list[min_ind]
 
         res.title = 'Estimated Parameters'
-        log.debug(res)
 
         return res
 
+    # @profile
     def get_label(self, para, st_arr=None):
         if st_arr is None:
             st_arr = self.st_arr
@@ -509,6 +449,7 @@ class AtsModel(object):
         label_arr = np.argmax(Z, axis=1)
         return label_arr
 
+    # @profile
     def run(self) -> Parameters:
         if not self.st_arr:
             return None
@@ -520,7 +461,7 @@ class AtsModel(object):
 
         n_ats_trial = self.n_max_ats - self.n_min_ats + 1
         bic_arr = np.full(n_ats_trial, self.pos_infinite)
-        res_list = list()
+        res_list = []
 
         self.unif_log_lik = self.lik_f0(log=True)
 
@@ -536,7 +477,6 @@ class AtsModel(object):
         res.label_arr = self.get_label(res)
 
         res.title = f'Final Result'
-        log.debug(res)
 
         return res
 

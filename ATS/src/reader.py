@@ -11,12 +11,9 @@ import re
 from typing import Dict, List
 
 import pysam
-from rich.progress import Progress, track
+from rich.progress import Progress
 
-try:
-    from src.loci import BED, Reads
-except ImportError:
-    from loci import BED, Reads
+from src.loci import BED, Reads
 
 
 def load_ats(path: str) -> Dict:
@@ -90,38 +87,54 @@ def load_utr(path: str) -> List[BED]:
     return res
 
 
+# @profile
 def load_reads(bam: List[str], region: BED) -> Dict:
     u"""
     Load reads, keys -> R1; values -> R2
     Only both R1
+
+    :params bam: list of bam files
+    :params region:
     """
     res = {}
     for b in bam:
         paired = {}
-        with pysam.AlignmentFile(b) as r:
-            for rec in r.fetch(region.chromosome, region.start, region.end):
-                if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
-                    continue
+        r = pysam.AlignmentFile(b) if isinstance(b, str) else b
+        for rec in r.fetch(region.chromosome, region.start, region.end):
+            if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
+                continue
 
-                if rec.is_read1:
-                    r1 = Reads.create(rec)
-                    if rec.query_name not in paired.keys():
-                        paired[rec.query_name] = r1
-                    else:
-                        r2 = paired.pop(rec.query_name)
-                        if r1 and r2:
-                            res[r1] = r2
+            if rec.is_read1:
+                r1 = Reads.create(rec)
+                if rec.query_name not in paired.keys():
+                    paired[rec.query_name] = r1
                 else:
-                    r2 = Reads.create(rec)
+                    r2 = paired.pop(rec.query_name)
+                    if r1 and r2:
+                        res[r1] = r2
+            else:
+                r2 = Reads.create(rec)
 
-                    if rec.query_name not in paired.keys():
-                        paired[rec.query_name] = r2
-                    else:
-                        r1 = paired.pop(rec.query_name)
-                        if r1 and r2:
-                            res[r1] = r2
+                if rec.query_name not in paired.keys():
+                    paired[rec.query_name] = r2
+                else:
+                    r1 = paired.pop(rec.query_name)
+                    if r1 and r2:
+                        res[r1] = r2
+
+        if isinstance(b, str):
+            r.close()
 
     return res
+
+
+def check_bam(path: str) -> bool:
+    try:
+        with pysam.AlignmentFile(path) as r:
+            pass
+    except Exception as err:
+        return False
+    return True
 
 
 if __name__ == '__main__':

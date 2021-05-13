@@ -6,7 +6,7 @@ Created at 2021.04.27 by Zhang
 Contians all the parameters and command line params handler
 """
 import click
-from logger import init_logger, log
+from logger import init_logger
 from process.preprocess import process
 
 
@@ -32,7 +32,7 @@ def preprocess(gtf: str, output: str, utr_length: int):
     Preprocess: extract UTR from gtf file
     \f
     """
-
+    init_logger()
     process(gtf=gtf, output=output, span=utr_length)
 
 

@@ -78,7 +78,4 @@ def process(gtf: str, output: str, span: int = 500):
                         
 
 if __name__ == '__main__':
-    process(
-        "/mnt/raid61/Personal_data/zhangyiming/genome/Homo_sapiens/Homo_sapiens.GRCh38.93.gtf", 
-        "/mnt/raid61/Personal_data/zhangyiming/code/afe/tests/blood_ctss.bed1"
-    )
+    pass

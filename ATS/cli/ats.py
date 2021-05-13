@@ -5,20 +5,17 @@ Created at 2021.04.25 by Zhang
 
 Contians all the parameters and command line params handler
 """
-import gzip
-import json
 import math
-import os
-from multiprocessing import Process, Queue, cpu_count
+import random
+from multiprocessing import cpu_count, Pool
 from typing import List, Optional
 
 import click
-import pysam
-from ats.core import AtsModel, Parameters
-from ats.reader import load_reads, load_utr
 from logger import init_logger, log
-# from rich import print
-from rich.progress import Progress
+from rich.progress import track
+from src.reader import check_bam, load_reads, load_utr
+
+from ats.core import AtsModel, Parameters
 
 
 class ATSParams(object):
@@ -65,12 +62,9 @@ class ATSParams(object):
         check input bam files
         """
         for bam in bams:
-            try:
-                with pysam.AlignmentFile(bam) as r:
-                    pass
-            except Exception as err:
-                log.error(f"{bam} is not a valid bam file: {err}")
-                exit(err)
+            if not check_bam(bam):
+                log.error(f"{bam} is not a valid bam file")
+                exit(1)
         return bams
 
     def __str__(self) -> str:
@@ -91,7 +85,7 @@ class ATSParams(object):
             yield i
 
     def __len__(self):
-        return len(self.utr)
+        return 50 # len(self.utr)
 
     @staticmethod
     def __format_reads_to_relative__(reads: List, utr) -> List[int]:
@@ -123,6 +117,11 @@ class ATSParams(object):
             # only use R1
             reads = load_reads(self.bam, self.utr[idx])
             reads = list(reads.keys())
+
+            if len(reads) > 10000:
+                random.seed(42)
+                reads = random.sample(reads, 10000)
+
             st_arr = self.__format_reads_to_relative__(reads, self.utr[idx])
             if len(st_arr) <= 1:
                 return None
@@ -172,32 +171,21 @@ class ATSParams(object):
         return None
 
 
-def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params: ATSParams):
+def run(args):
     u"""
-    Multiprocessing consumer to perform the ATS core function
-    :param input_queue: multiprocessing.Queue to get the index
-    :param output_queue: multiprocessing.Queue to return the results
-    :param params: the parameters for ATS model
     """
-
-    while True:
-        idx = input_queue.get()
-
-        if idx is None:
-            log.debug(f"{os.getpid()} existing")
-            break
-        log.debug(f"{os.getpid()} processing {idx}")
+    params, idx_range = args
+    res = []
+    for idx in idx_range:
         m = params.get_model(idx)
-        res = None
         try:
-            res = params.run(idx, m)
+            temp = params.run(idx, m)
+            if temp:
+                res.append(temp)
         except Exception as err:
-            output_queue.put(None)
-            error_queue.put(m.dumps())
-            log.error(err)
-        finally:
-            # input_queue.task_done()
-            output_queue.put(res)
+            continue
+
+    return res
 
 
 @click.command()
@@ -327,58 +315,23 @@ def ats(
         fixed_inference_flag = fixed_inference
     )
 
-    # init queues
-    input_queue = Queue()
-    output_queue = Queue()
-    error_queue = Queue()
+    # res = run([params, range(len(params))])
+    bk = len(params) // processes
+    cmds = []
+    for i in range(0, len(params), bk):
+        cmds.append([params, range(i, i + bk)])
 
-    # generate consumers
-    consumers = []
-    for _ in range(processes):
-        p = Process(
-            target=consumer, 
-            args=(
-                input_queue, 
-                output_queue,
-                error_queue,
-                params,
-            )
-        )
-        p.daemon = True
-        p.start()
-        consumers.append(p)
+    res = []
+    with Pool(processes) as p:
+        for i in track(p.imap_unordered(run, cmds), total=len(cmds)):
+            res += i
 
-    # producer to assign task
-    for i in params:
-        input_queue.put(i)
-        # join to wait consumers finished
-        # input_queue.join()
-    
-    with Progress() as progress:
-        task = progress.add_task("Computing...", total=len(params))
-        with open(output, "w+") as w:
-            header = '\t'.join(params.keys())
-            w.write(f"{header}\n")
-
-            while not progress.finished:
-                res = output_queue.get(block=True, timeout=None)
-                if res:
-                    w.write(f"{res}\n")
-
-                progress.update(task, advance = 1)
-
-    # kept the error data for further debugging
-    errors = []
-    while not error_queue.empty():
-        res = error_queue.get()
-        errors.append(res)
-    if errors:
-        with gzip.open(f"{output}.error_data.json.gz", "wt+") as w:
-            json.dump(errors, w, indent = 4)
+    with open(output, "w+") as w:
+        w.write("\n".join(res))
 
     log.info("DONE")
 
 
 if __name__ == '__main__':
-    inference()
+    ats()
 

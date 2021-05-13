@@ -8,24 +8,13 @@ This script contains the function to infer isoforms
 import os
 import re
 from functools import lru_cache, reduce
-from typing import Dict, List, Tuple
+from typing import List
 
 import numpy as np
 import pysam
-from rich import print
-
-try:
-    from logger import log
-    from src.convert import Coordinate, TreeNode, Window, WinList
-    from src.loci import BED
-
-    from ats.reader import load_ats
-except ImportError:
-    from convert import Coordinate, TreeNode, Window, WinList
-    from loci import BED
-
-    from reader import load_ats
-    pass
+from logger import log
+from src.convert import Coordinate, TreeNode, Window, WinList
+from src.loci import BED
 
 np.seterr(divide='ignore', invalid='ignore')
 

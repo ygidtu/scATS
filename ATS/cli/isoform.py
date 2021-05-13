@@ -3,15 +3,17 @@
 u"""
 Created at 2021.05.06 by Zhang
 """
-from multiprocessing import cpu_count, Process, Queue
-from typing import List
 import gzip
+from multiprocessing import Process, Queue, cpu_count
+from typing import List
+
 import click
-from ats.isoform import GTFUtils, assign_isoform
-from ats.reader import load_ats
 from logger import init_logger, log
 from rich import print
 from rich.progress import Progress
+from src.reader import check_bam, load_ats
+
+from ats.isoform import GTFUtils, assign_isoform
 
 
 def consumer(
@@ -159,6 +161,11 @@ def isoform(
 
     init_logger("DEBUG" if debug else "INFO")
     log.info("Isoform inference")
+
+    for b in bams:
+        if not check_bam(b):
+            log.error(f"{bam} is not a valid bam file: {err}")
+            exit(1)
 
     gtf = GTFUtils(gtf)
     ats = load_ats(ats)

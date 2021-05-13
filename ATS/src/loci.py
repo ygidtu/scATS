@@ -5,6 +5,7 @@ Created at 2021.04.25 by Zhang
 
 Dedifned genomic loci object
 """
+from distutils.version import Version
 from typing import List, Optional
 
 import pysam
@@ -264,6 +265,7 @@ class BED(Region):
     def to_str(self) -> str:
         return f"{self.chromosome}:{self.start}-{self.end}:{self.strand}"
 
+
 class Reads(Region):
     u"""
     Created at 2021.04.27 by Zhang
@@ -323,8 +325,11 @@ class Reads(Region):
             if record.is_unmapped or record.is_qcfail or not record.is_proper_pair:
                 return None
 
-            if record.has_tag("NH") and record.get_tag("NH") > 1:
-                return None
+            try:
+                if record.get_tag("NH") > 1:
+                    return None
+            except ValueError:
+                pass
 
         return cls(
             ref=record.reference_id,
@@ -333,7 +338,7 @@ class Reads(Region):
             strand = cls.__determine_strand__(record),
             name = record.query_name,
             is_read1 = record.is_read1,
-            cigar = record.cigartuples
+            cigar = record.cigarstring
         )
 
     @staticmethod
@@ -374,16 +379,23 @@ class Reads(Region):
         pos = self.start
         pos_list = [pos]
 
-        skipped_code = (1, 2, 4, 5)
+        skipped_code = ("I", "D", "S", "H")
         
-        for i, j in self.cigar:
+        j = ""
+        for i in self.cigar:
+            try:
+                int(i)
+                j += i
+            except ValueError:
+                j = int(j)
+                if i not in skipped_code:
+                    pos += j
 
-            if i not in skipped_code:
-                pos += j
+                if i == "N":
+                    pos_list.append(pos - j)
+                    pos_list.append(pos - 1)
 
-            if i == 3:
-                pos_list.append(pos - j)
-                pos_list.append(pos - 1)
+                j = ""
         
         pos_list.append(self.end)
 

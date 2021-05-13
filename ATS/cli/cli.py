@@ -8,8 +8,9 @@ Comand line handlers
 import click
 
 from cli.ats import ats
-from cli.preprocess import preprocess
 from cli.isoform import isoform
+from cli.preprocess import preprocess
+
 # from cli.test import test
 
 VERSION = "0.0.1-alpha"
