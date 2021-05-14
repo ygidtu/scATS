@@ -5,15 +5,18 @@ Created at 2021.04.25 by Zhang
 
 Contians all the parameters and command line params handler
 """
+import gzip
+import json
 import math
+import os
 import random
-from multiprocessing import cpu_count, Pool
+from multiprocessing import Pool, Process, Queue, cpu_count
 from typing import List, Optional
 
 import click
 from logger import init_logger, log
-from rich.progress import track
-from src.reader import check_bam, load_reads, load_utr
+from rich.progress import Progress, track
+from src.reader import Index, check_bam, load_reads, load_utr
 
 from ats.core import AtsModel, Parameters
 
@@ -43,8 +46,14 @@ class ATSParams(object):
         :params bam: path to bam files or list of bams
         """
         log.info("Load UTR")
-        self.utr = load_utr(utr)
-        self.bam = self.check_path(bam)
+
+        self.index, self.bam = None, None
+        if len(bam) == 1 and os.path.isdir(bam[0]):
+            self.utr = Index(bam[0])
+        else:
+            self.utr = load_utr(utr)
+            self.bam = self.check_path(bam)
+
         self.n_max_ats = n_max_ats
         self.n_min_ats = n_min_ats
         self.utr_length = utr_length
@@ -85,7 +94,7 @@ class ATSParams(object):
             yield i
 
     def __len__(self):
-        return 50 # len(self.utr)
+        return len(self.utr)
 
     @staticmethod
     def __format_reads_to_relative__(reads: List, utr) -> List[int]:
@@ -115,14 +124,18 @@ class ATSParams(object):
         """
         if idx < len(self.utr):
             # only use R1
-            reads = load_reads(self.bam, self.utr[idx])
+            if self.bam is not None:
+                reads = load_reads(self.bam, self.utr[idx])
+                utr = self.utr[idx] 
+            else:
+                utr, reads = self.utr.get(idx)
             reads = list(reads.keys())
 
             if len(reads) > 10000:
                 random.seed(42)
                 reads = random.sample(reads, 10000)
 
-            st_arr = self.__format_reads_to_relative__(reads, self.utr[idx])
+            st_arr = self.__format_reads_to_relative__(reads, utr)
             if len(st_arr) <= 1:
                 return None
   
@@ -186,6 +199,34 @@ def run(args):
             continue
 
     return res
+
+
+def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params: ATSParams):
+    u"""
+    Multiprocessing consumer to perform the ATS core function
+    :param input_queue: multiprocessing.Queue to get the index
+    :param output_queue: multiprocessing.Queue to return the results
+    :param params: the parameters for ATS model
+    """
+
+    while True:
+        idx = input_queue.get()
+
+        if idx is None:
+            log.debug(f"{os.getpid()} existing")
+            break
+        log.debug(f"{os.getpid()} processing {idx}")
+        m = params.get_model(idx)
+        res = None
+        try:
+            res = params.run(idx, m)
+        except Exception as err:
+            output_queue.put(None)
+            error_queue.put(m.dumps())
+            log.error(err)
+        finally:
+            # input_queue.task_done()
+            output_queue.put(res)
 
 
 @click.command()
@@ -316,18 +357,69 @@ def ats(
     )
 
     # res = run([params, range(len(params))])
-    bk = len(params) // processes
-    cmds = []
-    for i in range(0, len(params), bk):
-        cmds.append([params, range(i, i + bk)])
+    # bk = len(params) // processes
+    # cmds = []
+    # for i in range(0, len(params), bk):
+    #     cmds.append([params, range(i, i + bk)])
 
-    res = []
-    with Pool(processes) as p:
-        for i in track(p.imap_unordered(run, cmds), total=len(cmds)):
-            res += i
+    # res = []
+    # with Pool(processes) as p:
+    #     for i in track(p.imap_unordered(run, cmds), total=len(cmds)):
+    #         res += i
 
-    with open(output, "w+") as w:
-        w.write("\n".join(res))
+    # with open(output, "w+") as w:
+    #     w.write("\n".join(res))
+
+    # init queues
+    input_queue = Queue()
+    output_queue = Queue()
+    error_queue = Queue()
+
+    # generate consumers
+    consumers = []
+    for _ in range(processes):
+        p = Process(
+            target=consumer, 
+            args=(
+                input_queue, 
+                output_queue,
+                error_queue,
+                params,
+            )
+        )
+        p.daemon = True
+        p.start()
+        consumers.append(p)
+
+    # producer to assign task
+    for i in params:
+        input_queue.put(i)
+        # join to wait consumers finished
+        # input_queue.join()
+    
+    with Progress() as progress:
+        task = progress.add_task("Computing...", total=len(params))
+        with open(output, "w+") as w:
+            header = '\t'.join(params.keys())
+            w.write(f"{header}\n")
+
+            while not progress.finished:
+                res = output_queue.get(block=True, timeout=None)
+                if res:
+                    w.write(f"{res}\n")
+
+                progress.update(task, advance = 1)
+
+    # kept the error data for further debugging
+    errors = []
+    while not error_queue.empty():
+        res = error_queue.get()
+        errors.append(res)
+
+    if errors:
+        with gzip.open(f"{output}.error_data.json.gz", "wt+") as w:
+            json.dump(errors, w, indent = 4)
+
 
     log.info("DONE")
 

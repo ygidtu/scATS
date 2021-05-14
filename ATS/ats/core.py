@@ -8,12 +8,12 @@ Core ATS model
 from __future__ import annotations
 
 import json
-from math import e, pi
+from math import e, pi, log
 from typing import List
 
 import numpy as np
 from KDEpy import FFTKDE
-from logger import log
+from logger import log as logger
 from scipy.signal import find_peaks
 
 ################### Part 3: ATS mixture #####################################
@@ -141,14 +141,14 @@ class AtsModel(object):
         return cls(**data)
 
     @classmethod
-    def normpdf(cls, x, mu, sigma, log = False):
+    def normpdf(cls, x, mu, sigma, do_log = False):
         u"""
         replace scipt.stats.norm
         It's seems have performance issues
         """
         u = (np.array(x)-mu)/np.abs(sigma)
         y = (1/(np.sqrt(2 * pi) * np.abs(sigma))) * np.exp(-u * u/2)
-        return np.log(y) if log else y
+        return np.log(y) if do_log else y
 
     @classmethod
     def entropy(cls, mtx, base=None):
@@ -219,7 +219,7 @@ class AtsModel(object):
 
         para.ws = self.maximize_ws(Z)
 
-        # log.debug(f"tmp_sumk={tmp_sumk}; k={k}; Z.shape={Z.shape}")
+        # logger.debug(f"tmp_sumk={tmp_sumk}; k={k}; Z.shape={Z.shape}")
         u"""
         2020.05.06 Here, 
         para.alpha_arr is an empry list, but try to set value by index
@@ -323,7 +323,7 @@ class AtsModel(object):
             log_zmat = self.cal_z_k(para, k, log_zmat)
 
         for i in range(self.nround):
-            log.debug(f'iteration={i + 1}  lb={lb}')
+            logger.debug(f'iteration={i + 1}  lb={lb}')
 
             # E-Step
             log_zmat = self.cal_z_k(para, k_arr[i], log_zmat)
@@ -344,9 +344,9 @@ class AtsModel(object):
                 lb = lb_new
 
         if i == self.nround:
-            log.debug(f'Run all {i + 1} iterations. lb={lb}')
+            logger.debug(f'Run all {i + 1} iterations. lb={lb}')
         else:
-            log.debug(f'Converge in  {i + 1} iterations. lb={lb}')
+            logger.debug(f'Converge in  {i + 1} iterations. lb={lb}')
 
         bic = AtsModel.cal_bic(log_zmat, Z)
 
@@ -405,7 +405,7 @@ class AtsModel(object):
         if len(rm_inds) == 0:
             return para
 
-        log.warn(f'Remove components {rm_inds} with weight less than min_ws={self.min_ws}.')
+        logger.warn(f'Remove components {rm_inds} with weight less than min_ws={self.min_ws}.')
         keep_inds = np.array([i for i in range(para.K) if not para.ws[i] < self.min_ws])
         para.alpha_arr = para.alpha_arr[keep_inds]
         para.beta_arr = para.beta_arr[keep_inds]

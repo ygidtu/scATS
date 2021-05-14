@@ -6,15 +6,25 @@ Create reads index from bam to accelerate AtsModel using GO Core
 """
 
 import os
-from subprocess import check_call
-from multiprocessing import cpu_count
-
+from multiprocessing import cpu_count, Pool
+from rich.progress import track
+import pysam
+import pickle
 import click
+from src.reader import load_utr, load_reads
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 __exe__ = os.path.join(__dir__, "../process/fetch/afe")
 
 
+def run(args):
+    o, u, bams = args
+
+    res = load_reads(bams, u)
+
+    with open(o, "wb+") as w:
+        pickle.dump(res, w)
+    
 
 @click.command()
 @click.option(
@@ -36,13 +46,23 @@ __exe__ = os.path.join(__dir__, "../process/fetch/afe")
     help=""" How many cpu to use. """
 )
 @click.argument("bams", nargs = -1, type=click.Path(exists=True), required=True)
-def index(bams, utr: str, processes: int, output: str):
-    cmd = f"{__exe__} -u {os.path.abspath(utr)} -o {os.path.abspath(output)} -t {processes}"
-    for i in bams:
-        cmd = f"{cmd} -i {os.path.abspath(i)}"
+def index(bams, utr, processes: int, output: str):
+    u"""
+    Index is used to reduce the IO time, It‘s helpful for the parameter testing
+    """
+    
+    os.makedirs(output, exist_ok=True)
 
-    check_call(cmd, shell=True)
+    utr = load_utr(utr)
 
+    with open(os.path.join(output, "index.pkl"), "wb+") as w:
+        pickle.dump(utr, w)
+
+    cmds = [[os.path.join(output, f"{idx}.pkl"), u, bams] for idx, u in enumerate(utr)]
+
+    with Pool(processes) as p:
+        list(track(p.imap_unordered(run, cmds), total = len(cmds)))
+    
 
 if __name__ == '__main__':
     pass

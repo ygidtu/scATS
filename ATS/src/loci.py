@@ -261,7 +261,7 @@ class BED(Region):
             name=name,
             strand=strand
         )
-        
+
     def to_str(self) -> str:
         return f"{self.chromosome}:{self.start}-{self.end}:{self.strand}"
 
@@ -331,21 +331,6 @@ class Reads(Region):
             name = record.query_name,
             is_read1 = record.is_read1,
             cigar = record.cigarstring
-        )
-
-    @classmethod
-    def create_from_json(cls, data: dict):
-        u"""
-        create list of reads from 
-        """
-        return cls(
-            ref = data["chromosome"],
-            start = data["start"],
-            end = data["end"],
-            name = data["name"],
-            strand = data["strand"],
-            is_read1 = data["is_read1"],
-            cigar = data["cigar"]
         )
 
     @staticmethod
