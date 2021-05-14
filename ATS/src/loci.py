@@ -5,7 +5,7 @@ Created at 2021.04.25 by Zhang
 
 Dedifned genomic loci object
 """
-from distutils.version import Version
+
 from typing import List, Optional
 
 import pysam
@@ -281,7 +281,8 @@ class Reads(Region):
         name: str,
         strand: str,
         is_read1: bool, 
-        cigar = None
+        cigar = None,
+        **kwargs
     ):
         u"""
         init the reads object
@@ -300,17 +301,8 @@ class Reads(Region):
 
         self.name = name
         self.is_read1 = is_read1
-        self.paired = None
         self.cigar = cigar
-
-    def set_paired(self, v):
-        u"""
-        setter of paired
-        :param v: another Reads object
-        """
-
-        self.paired = v
-        v.paired = self
+        self.kwargs = kwargs
 
     @classmethod
     def create(cls, record: pysam.AlignedSegment, skip_qc: bool = False):
@@ -339,6 +331,21 @@ class Reads(Region):
             name = record.query_name,
             is_read1 = record.is_read1,
             cigar = record.cigarstring
+        )
+
+    @classmethod
+    def create_from_json(cls, data: dict):
+        u"""
+        create list of reads from 
+        """
+        return cls(
+            ref = data["chromosome"],
+            start = data["start"],
+            end = data["end"],
+            name = data["name"],
+            strand = data["strand"],
+            is_read1 = data["is_read1"],
+            cigar = data["cigar"]
         )
 
     @staticmethod
@@ -400,6 +407,7 @@ class Reads(Region):
         pos_list.append(self.end)
 
         return pos_list
+
 
 
 if __name__ == '__main__':

@@ -10,6 +10,7 @@ import click
 from cli.ats import ats
 from cli.isoform import isoform
 from cli.preprocess import preprocess
+from cli.index import index
 
 # from cli.test import test
 
@@ -38,6 +39,7 @@ def cli():
 
 
 cli.add_command(preprocess)
+cli.add_command(index)
 cli.add_command(ats)
 cli.add_command(isoform)
 # cli.add_command(test)

@@ -6,6 +6,7 @@ Created at 2021.04.25 by Zhang
 Preprocess of UTR bed and BAM, to get the data for model
 """
 import gzip
+import json
 import os
 import re
 from typing import Dict, List
@@ -97,10 +98,12 @@ def load_reads(bam: List[str], region: BED) -> Dict:
     :params region:
     """
     res = {}
+    count = 0
     for b in bam:
         paired = {}
         r = pysam.AlignmentFile(b) if isinstance(b, str) else b
         for rec in r.fetch(region.chromosome, region.start, region.end):
+            count += 1
             if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
                 continue
 
@@ -125,6 +128,7 @@ def load_reads(bam: List[str], region: BED) -> Dict:
         if isinstance(b, str):
             r.close()
 
+    print(count)
     return res
 
 
@@ -135,6 +139,20 @@ def check_bam(path: str) -> bool:
     except Exception as err:
         return False
     return True
+
+
+def load_index(path: str):
+    with gzip.open(path, "rt") as r:
+        data = json.load(r)
+
+    res = {}
+    for utr, values in data.items():
+        res[utr] = {
+            Reads.create_from_json(i): Reads.create_from_json(j) 
+            for i, j in zip(values["R1"], values["R2"])
+        }
+        
+    return res
 
 
 if __name__ == '__main__':
