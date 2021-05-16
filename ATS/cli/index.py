@@ -11,19 +11,38 @@ from rich.progress import track
 import pysam
 import pickle
 import click
+from logger import log
 from src.reader import load_utr, load_reads
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
 __exe__ = os.path.join(__dir__, "../process/fetch/afe")
 
 
+def check_pickle(path: str) -> bool:
+    try:
+        with open(path, "rb") as r:
+            pickle.load(r)
+        return True
+    except Exception:
+        return False
+
+
 def run(args):
     o, u, bams = args
 
-    res = load_reads(bams, u)
+    if not check_pickle(o):
+        return 
 
-    with open(o, "wb+") as w:
-        pickle.dump(res, w)
+    try:
+        res = load_reads(bams, u)
+
+        with open(o, "wb+") as w:
+            pickle.dump(res, w)
+    except ValueError as err:
+        log.error(err)
+
+        with open(o, "wb+") as w:
+            pickle.dump({}, w)
     
 
 @click.command()

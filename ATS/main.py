@@ -5,6 +5,9 @@ Created at 2021.04.25 by Zhang
 
 Main function 
 """
+import warnings
+
+warnings.filterwarnings("ignore")
 
 from cli.cli import cli
 
