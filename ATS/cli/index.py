@@ -19,6 +19,8 @@ __exe__ = os.path.join(__dir__, "../process/fetch/afe")
 
 
 def check_pickle(path: str) -> bool:
+    if not os.path.exists(path):
+        return False
     try:
         with open(path, "rb") as r:
             pickle.load(r)
@@ -30,7 +32,7 @@ def check_pickle(path: str) -> bool:
 def run(args):
     o, u, bams = args
 
-    if not check_pickle(o):
+    if check_pickle(o):
         return 
 
     try:

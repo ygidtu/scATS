@@ -10,14 +10,17 @@ click==8.0.0
 colorama==0.4.4; python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3, 3.4'
 commonmark==0.9.1
 cycler==0.10.0
+cython==0.29.23
 kdepy==1.0.10
 kiwisolver==1.3.1; python_version >= '3.6'
+matplotlib==3.4.2; python_version >= '3.7'
 numpy==1.20.3
+pillow==8.2.0; python_version >= '3.6'
 pygments==2.9.0; python_version >= '3.5'
 pyparsing==2.4.7; python_version >= '2.6' and python_version not in '3.0, 3.1, 3.2, 3.3'
 pysam==0.16.0.1
 python-dateutil==2.8.1; python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3'
-rich==10.1.0
+rich==10.2.0
 scipy==1.6.3
 six==1.16.0; python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3'
-typing-extensions==3.10.0.0
+typing-extensions==3.10.0.0; python_version < '3.8'

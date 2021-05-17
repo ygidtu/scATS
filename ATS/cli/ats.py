@@ -38,7 +38,8 @@ class ATSParams(object):
         min_ws: float = 0.01,
         max_unif_ws: float = 0.1,
         max_beta: int = 50,
-        fixed_inference_flag: bool = False
+        fixed_inference_flag: bool = False,
+        debug = False
     ):
         u"""
         init this function
@@ -64,6 +65,7 @@ class ATSParams(object):
         self.max_unif_ws = max_unif_ws
         self.max_beta = max_beta
         self.fixed_inference_flag = fixed_inference_flag
+        self.debug = debug
 
     @staticmethod
     def check_path(bams: List[str]) -> List[str]:
@@ -94,7 +96,7 @@ class ATSParams(object):
             yield i
 
     def __len__(self):
-        return len(self.utr)
+        return len(self.utr) if not self.debug else 5
 
     @staticmethod
     def __format_reads_to_relative__(reads: List, utr) -> List[int]:
@@ -307,7 +309,7 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     "-d", "--debug",
     is_flag=True,
     type=click.BOOL,
-    help=""" Enable debug mode to get more debugging information. """
+    help=""" Enable debug mode to get more debugging information, Never used this while running. """
 )
 @click.option(
     "-p", "--processes",
@@ -356,20 +358,10 @@ def ats(
         fixed_inference_flag = fixed_inference
     )
 
-    # res = run([params, range(len(params))])
-    # bk = len(params) // processes
-    # cmds = []
-    # for i in range(0, len(params), bk):
-    #     cmds.append([params, range(i, i + bk)])
-
-    # res = []
-    # with Pool(processes) as p:
-    #     for i in track(p.imap_unordered(run, cmds), total=len(cmds)):
-    #         res += i
-
-    # with open(output, "w+") as w:
-    #     w.write("\n".join(res))
-
+    if debug:
+        run([params, range(len(params))])
+        exit(0)
+    
     # init queues
     input_queue = Queue()
     output_queue = Queue()

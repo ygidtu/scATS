@@ -12,7 +12,6 @@ from cli.isoform import isoform
 from cli.preprocess import preprocess
 from cli.index import index
 
-from cli.test import test
 
 VERSION = "0.0.1-alpha"
 LABEL = "scATS"
@@ -42,4 +41,4 @@ cli.add_command(preprocess)
 cli.add_command(index)
 cli.add_command(ats)
 cli.add_command(isoform)
-cli.add_command(test)
+
