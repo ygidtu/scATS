@@ -18,9 +18,11 @@ class Region(object):
     Class handle the genomic regions
     """
 
+    __slots__ = ["chromosome", "start", "end", "strand"]
+
     def __init__(self, chromosome: str, start: int, end: int, strand: str):
         assert strand in ("+", "-"), "strand must be + or -"
-        assert end >= start, f"end must bigger than start, current -> start: {start}, end: {end}"
+        assert end >= start, "end must bigger than start, current -> start: {}, end: {}".format(start, end)
 
         self.chromosome = chromosome
         self.start = int(start)
@@ -28,7 +30,12 @@ class Region(object):
         self.strand = strand
 
     def __str__(self) -> str:
-        return f"{self.chromosome}:{self.start}-{self.end}:{self.strand}"
+        return "{}:{}-{}:{}".format(
+            self.chromosome,
+            self.start,
+            self.end,
+            self.strand
+        )
 
     def __hash__(self):
         return hash(self.__str__())
@@ -96,7 +103,7 @@ class GTF(Region):
 
     Class handle the records in BED format
     """
-
+    __slots__ = ["attrs", "source", "ids"]
     __id_label__ = ["gene_id", "gene_name", "transcript_id", "transcript_name", "exon_id"]
 
     def __init__(
@@ -200,7 +207,14 @@ class GTF(Region):
         r_id = ",".join([x for x in [self.gene_id, self.transcript_id, self.exon_id] if x])
         r_name = ",".join([x for x in [self.gene_name, self.transcript_name] if x])
 
-        return f"{self.chromosome}\t{self.start}\t{self.end}\t{r_id}\t{r_name}\t{self.strand}"
+        return "{}\t{}\t{}\t{}\t{}\t{}".format(
+            self.chromosome,
+            self.start,
+            self.end,
+            r_id,
+            r_name,
+            self.strand
+        )
 
 
 class BED(Region):
@@ -210,11 +224,13 @@ class BED(Region):
     Class handle the records in BED format
     """
 
+    __slots__ = ("name", "id")
+
     def __init__(
         self, 
         chromosome: str, 
-        start: str, 
-        end: str, 
+        start: int, 
+        end: int, 
         strand: str, 
         name: str, 
         record_id: str
@@ -224,7 +240,14 @@ class BED(Region):
         self.id = record_id
 
     def __str__(self) -> str:
-        return f"{self.chromosome}\t{self.start}\t{self.end}\t{self.id}\t{self.name}\t{self.strand}"
+        return "{}\t{}\t{}\t{}\t{}\t{}".format(
+            self.chromosome,
+            self.start,
+            self.end,
+            self.id,
+            self.name,
+            self.strand
+        )
 
     def __len__(self) -> int:
         return self.end - self.start
@@ -239,7 +262,7 @@ class BED(Region):
         bed = bed.strip().split("\t")
 
         if len(bed) not in [3, 4, 6]:
-            raise TypeError(f"Invalid columns, 3, 4 or 6 is required, current: {bed}")
+            raise TypeError("Invalid columns, 3, 4 or 6 is required, current: {}".format(bed))
 
         strand = "+"
         name = "."
@@ -263,7 +286,12 @@ class BED(Region):
         )
 
     def to_str(self) -> str:
-        return f"{self.chromosome}:{self.start}-{self.end}:{self.strand}"
+        return "{}:{}-{}:{}".format(
+            self.chromosome,
+            self.start,
+            self.end,
+            self.strand
+        )
 
 
 class Reads(Region):
@@ -272,6 +300,8 @@ class Reads(Region):
 
     Class handle the reads and it's junctions
     """
+
+    __slots__ = ["name", "is_read1", "cigar", "kwargs"]
 
     def __init__(
         self, 
@@ -392,7 +422,6 @@ class Reads(Region):
         pos_list.append(self.end)
 
         return pos_list
-
 
 
 if __name__ == '__main__':

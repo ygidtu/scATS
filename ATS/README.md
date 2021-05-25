@@ -3,7 +3,7 @@
 ## TODO
 
 - [x] preprocess
-- [ ] ATS model
-- [ ] isoform identification
+- [x] ATS model
+- [x] isoform identification
 - [ ] count
 - [ ] PSI

@@ -67,7 +67,7 @@ def load_ats(path: str) -> Dict:
     return beds
 
 
-def load_utr(path: str) -> List[BED]:
+def load_utr(path: str, debug: bool = False) -> List[BED]:
     u"""
     Load extracted UTR from bed file
     :param path: path to bed file
@@ -81,6 +81,9 @@ def load_utr(path: str) -> List[BED]:
 
         with gzip.open(path, "rt") if path.endswith("gz") else open(path) as r:
             for line in r:
+
+                if debug and len(res) > 50:
+                    return res
                 progress.update(task_id, advance=len(str.encode(line)))
 
                 res.append(BED.create(line))
@@ -101,7 +104,10 @@ def load_reads(bam: List[str], region: BED) -> Dict:
     for b in bam:
         paired = {}
         r = pysam.AlignmentFile(b) if isinstance(b, str) else b
-        for rec in r.fetch(region.chromosome, region.start, region.end):
+
+        # fetch with until_eof is faster on large bam file according to 
+        # https://pysam.readthedocs.io/en/latest/faq.html
+        for rec in r.fetch(region.chromosome, region.start, region.end, until_eof=True):
             if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
                 continue
 

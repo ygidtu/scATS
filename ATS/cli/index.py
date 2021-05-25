@@ -15,8 +15,6 @@ from logger import log
 from src.reader import load_utr, load_reads
 
 __dir__ = os.path.dirname(os.path.abspath(__file__))
-__exe__ = os.path.join(__dir__, "../process/fetch/afe")
-
 
 def check_pickle(path: str) -> bool:
     if not os.path.exists(path):

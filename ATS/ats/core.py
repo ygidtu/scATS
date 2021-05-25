@@ -8,16 +8,14 @@ Core ATS model
 from __future__ import annotations
 
 import json
-from math import e, log, pi
+from math import pi
 from typing import Dict, List
 
 import numpy as np
 
 from KDEpy import FFTKDE
+from numpy.core.numeric import Inf
 from scipy.signal import find_peaks
-
-import pyximport; pyximport.install()
-import src.entropy as cent
 
 from logger import log as logger
 
@@ -164,7 +162,12 @@ class AtsModel(object):
     #@profile
     def entropy(cls, mtx):
         """ Computes entropy of label distribution. """
-        return cent.entropy(mtx)
+
+        def __entropy__(labels):
+            labels = np.divide(labels, len(labels))
+            return -1 * np.sum(np.multiply(labels, np.log(labels)))
+        
+        return np.sum([__entropy__(x) for x in mtx])
 
     #@profile
     def cal_z_k(self, para, k, log_zmat):
@@ -224,6 +227,7 @@ class AtsModel(object):
         tmp_beta = np.sqrt(np.sum(Z[:, k] * ((self.st_arr - alpha_arr[k]) ** 2)) / tmp_sumk)
 
         idx = np.searchsorted(self.predef_beta_arr, tmp_beta, side='left')
+
         if idx == len(self.predef_beta_arr):
             beta_arr[k] = self.predef_beta_arr[idx - 1]
         elif idx > 0 and self.predef_beta_arr[idx] - tmp_beta >= tmp_beta - self.predef_beta_arr[idx - 1]:
@@ -248,10 +252,7 @@ class AtsModel(object):
     @staticmethod
     #@profile
     def elbo(log_zmat, Z):
-        lb = AtsModel.exp_log_lik(log_zmat, Z)
-        lb1 = AtsModel.entropy(Z)
-        lb = np.add(lb, np.sum(lb1))
-        return lb
+        return np.add(AtsModel.exp_log_lik(log_zmat, Z), AtsModel.entropy(Z))
 
     # calculate the expected log joint likelihood
     @staticmethod
@@ -338,6 +339,10 @@ class AtsModel(object):
 
             lb_new = self.elbo(log_zmat, Z)
             lb_arr.append(lb_new)
+            
+            if np.isposinf(lb_new) or np.isneginf(lb_new):
+                lb = Inf
+                break
 
             if np.abs(np.subtract(lb_new, lb)) < np.abs(np.multiply(1e-6, lb)):
                 break

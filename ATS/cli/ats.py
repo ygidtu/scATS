@@ -10,12 +10,12 @@ import json
 import math
 import os
 import random
-from multiprocessing import Pool, Process, Queue, cpu_count
-from typing import List, Optional
+from multiprocessing import Process, Queue, cpu_count
+from typing import List, Optional, Union
 
 import click
 from logger import init_logger, log
-from rich.progress import Progress, track
+from rich.progress import Progress
 from src.reader import Index, check_bam, load_reads, load_utr
 
 from ats.core import AtsModel, Parameters
@@ -38,6 +38,7 @@ class ATSParams(object):
         min_ws: float = 0.01,
         max_unif_ws: float = 0.1,
         max_beta: int = 50,
+        max_reads: Union[int, float] = math.inf,
         fixed_inference_flag: bool = False,
         debug = False
     ):
@@ -65,6 +66,7 @@ class ATSParams(object):
         self.max_unif_ws = max_unif_ws
         self.max_beta = max_beta
         self.fixed_inference_flag = fixed_inference_flag
+        self.max_reads = max_reads
         self.debug = debug
 
     @staticmethod
@@ -133,9 +135,9 @@ class ATSParams(object):
                 utr, reads = self.utr.get(idx)
             reads = list(reads.keys())
 
-            if len(reads) > 10000:
+            if len(reads) > self.max_reads:
                 random.seed(42)
-                reads = random.sample(reads, 10000)
+                reads = random.sample(reads, int(self.max_reads))
 
             st_arr = self.__format_reads_to_relative__(reads, utr)
             if len(st_arr) <= 1:
@@ -203,7 +205,7 @@ def run(args):
     return res
 
 
-def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params: ATSParams):
+def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params: ATSParams, debug: bool = False):
     u"""
     Multiprocessing consumer to perform the ATS core function
     :param input_queue: multiprocessing.Queue to get the index
@@ -225,9 +227,13 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
         except Exception as err:
             output_queue.put(None)
             error_queue.put(m.dumps())
-            log.error(err)
+
+            if debug:
+                log.exception(err)
+                exit(0)
+            else:
+                log.error(err)
         finally:
-            # input_queue.task_done()
             output_queue.put(res)
 
 
@@ -246,13 +252,13 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
 )
 @click.option(
     "--n-max-ats",
-    type=click.IntRange(1, math.inf),
+    type=click.IntRange(1, 999),
     default = 5,
     help=""" The maximum number of ATSs in same UTR. """
 )
 @click.option(
     "--n-min-ats",
-    type=click.IntRange(1, math.inf),
+    type=click.IntRange(1, 998),
     default = 1,
     help=""" The minimum number of ATSs in same UTR. """
 )
@@ -299,6 +305,12 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     help=""" The maximum std for ATSs. """
 )
 @click.option(
+    "--max-reads",
+    type=float,
+    default = math.inf,
+    help=""" The maximum reads used in single UTR, default use all reads. """
+)
+@click.option(
     "--fixed-inference",
     is_flag=True,
     default = True,
@@ -332,6 +344,7 @@ def ats(
     fixed_inference: bool,
     processes: int,
     debug: bool, 
+    max_reads: float,
     bams: List[str],
 ):
     u"""
@@ -355,7 +368,8 @@ def ats(
         min_ws = min_ws,
         max_unif_ws = max_unif_ws,
         max_beta = max_beta,
-        fixed_inference_flag = fixed_inference
+        fixed_inference_flag = fixed_inference,
+        max_reads = max_reads
     )
 
     if debug:
@@ -377,6 +391,7 @@ def ats(
                 output_queue,
                 error_queue,
                 params,
+                debug
             )
         )
         p.daemon = True
@@ -386,8 +401,6 @@ def ats(
     # producer to assign task
     for i in params:
         input_queue.put(i)
-        # join to wait consumers finished
-        # input_queue.join()
     
     with Progress() as progress:
         task = progress.add_task("Computing...", total=len(params))
@@ -419,3 +432,4 @@ def ats(
 if __name__ == '__main__':
     ats()
 
+ 

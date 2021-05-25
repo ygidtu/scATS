@@ -163,3 +163,5 @@ errors/
 *.tsv
 others/bin/*
 *.tar.bz2
+testfile/
+*.csv

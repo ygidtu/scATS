@@ -25,7 +25,7 @@ np.seterr(divide='ignore', invalid='ignore')
 
 ################### Part 1: Isoform mapping #####################################
 
-
+#@profile
 def map_iso_to_gene(iso_list: WinList, gene_list: WinList):
     """
     :param iso_list: exon windows of the isoform on gene
@@ -56,6 +56,7 @@ def map_iso_to_gene(iso_list: WinList, gene_list: WinList):
     return res_win_list
 
 
+#@profile
 def build_tree(isowins_list: List[WinList]):
     """
     :param isowins_list: each element is an aligned WinList of the same window across different isoforms
@@ -82,11 +83,13 @@ def build_tree(isowins_list: List[WinList]):
     return dfs(0, len(alignwins_list))
 
 
+#@profile
 def concatenate_winlist(winlist1: WinList, winlist2: WinList):
     res_list = [concatenate_windows(w1, w2) for w1, w2 in zip(winlist1, winlist2)]
     return WinList(res_list)
 
 
+#@profile
 def concatenate_windows(win_left: Window, win_right: Window) -> Window:
     if win_left and win_right and win_left.end == win_right.start:
         return Window(win_left.start, win_right.end)
@@ -94,6 +97,7 @@ def concatenate_windows(win_left: Window, win_right: Window) -> Window:
         return Window()
 
 
+#@profile
 def query(root: TreeNode, query_winlist: WinList, iso_index: int):
     """
     map the query_winlist to isoform, get the relative index of the query window on all isoforms
@@ -147,6 +151,7 @@ def query(root: TreeNode, query_winlist: WinList, iso_index: int):
 
 
 # map a window to gene
+#@profile
 def map_to_gene(root: TreeNode, query_winlist: WinList, iso_index: int):
     """
     map the query_winlist to gene, get the relative index of the query window on the gene
@@ -195,6 +200,7 @@ def map_to_gene(root: TreeNode, query_winlist: WinList, iso_index: int):
 
 ################### Part 2: isoform processing and assignment #####################################
 # modify exons of isoform such that ATS falls into an exon
+#@profile
 def proc_isoform(ats_pos: int, iso_wins: WinList):
     """
     :param iso_wins_list: list of isoforms, 0th element is gene range
@@ -226,6 +232,7 @@ def proc_isoform(ats_pos: int, iso_wins: WinList):
 
 
 # calculate relative positions of reads on each isoform
+#@profile
 def get_read_relative_pos(iso_wins_list: List[WinList], r1_wins_list: List[WinList], r2_wins_list: List[WinList],
                           read_labels):
     # break all isoforms into atomic non-overlapping windows
@@ -266,6 +273,7 @@ def get_read_relative_pos(iso_wins_list: List[WinList], r1_wins_list: List[WinLi
 
 # given an ATS position, calculate the posterior distribution of different isoforms
 # if return all zeros, it hints this may be a novel ATS
+#@profile
 def assign_isoform(ats_pos: int, iso_wins_list: List[WinList], r1_wins_list: List[WinList], r2_wins_list: List[WinList],
                    read_labels, mu_frag=400, sd_frag=30, min_frag_len=150):
     """
@@ -335,6 +343,7 @@ def assign_isoform(ats_pos: int, iso_wins_list: List[WinList], r1_wins_list: Lis
 
 
 # calculate the posterior probability of each DNA fragment on different isoforms
+#@profile
 def cal_post_prob(mu_frag_size: int, sd_frag_size: int, len_iso_mat: np.ndarray):
     """
     :param mu_frag_size: mean of fragment size

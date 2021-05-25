@@ -91,6 +91,79 @@ def consumer(
         output_queue.put(res)
 
 
+def run(
+    ats,
+    gtf,
+    bams,
+    mu_f,
+    sigma_f,
+    min_frag_length
+):
+    u"""
+    Debug mode
+    """
+    res = []
+    for utr, region in ats.items():
+        try:
+            iso_tbl = gtf.read_transcripts(utr)
+
+            if not iso_tbl:
+                continue
+            
+            iso_wins_list = iso_tbl.winList
+
+            if not iso_wins_list:
+                continue
+
+            iso_tbl.set_bams(bams)
+            reads = iso_tbl.reads(utr)
+            
+            r1_wins_list = []
+            r2_wins_list = []
+            frag_inds = []
+            for r1, r2 in reads.items():
+                assign1 = iso_tbl.assign(r1)
+                assign2 = iso_tbl.assign(r2)
+
+                for a in set(assign1) & set(assign2):
+                    r1_wins_list.append(iso_tbl.reads_to_relative(r1, return_winlist = True))
+                    r2_wins_list.append(iso_tbl.reads_to_relative(r2, return_winlist = True))
+                    frag_inds.append(a)
+
+            for r in region:
+                ats_pos = (r.start if r.strand == "+" else r.end) - iso_tbl.gene.start
+                iso_ws = assign_isoform(
+                    ats_pos, 
+                    iso_wins_list, 
+                    r1_wins_list, 
+                    r2_wins_list, 
+                    frag_inds,
+                    mu_f, 
+                    sigma_f, 
+                    min_frag_len=min_frag_length
+                )
+
+                ws = []
+                ids = []
+                gene_id = iso_tbl.get(0)
+                for i, j in enumerate(iso_ws):
+                    if j > 0:
+                        ws.append(str(j))
+                        ids.append(iso_tbl.get(i))
+
+                if ws:
+                    res.append(f"{r.to_str()}\t{gene_id}\t{','.join(ids)}\t{','.join(ws)}")
+                else:
+                    res.append(f"{r.to_str()}\t{gene_id}\t.\t.")
+        except Exception as err:
+            log.exception(err)
+            print(utr)
+
+        if len(res) > 5:
+            break
+    return res
+
+
 @click.command()
 @click.option(
     "-i", "--ats",
@@ -164,11 +237,23 @@ def isoform(
 
     for b in bams:
         if not check_bam(b):
-            log.error(f"{bam} is not a valid bam file: {err}")
+            log.error(f"{bams} is not a valid bam file")
             exit(1)
 
     gtf = GTFUtils(gtf)
     ats = load_ats(ats)
+
+    if debug:
+        res = run(
+            ats=ats,
+            gtf=gtf,
+            bams=bams,
+            mu_f=mu_f,
+            sigma_f=sigma_f,
+            min_frag_length=min_frag_length,
+        )
+        print(res)
+        exit(0)
 
     input_queue = Queue()
     output_queue = Queue()
