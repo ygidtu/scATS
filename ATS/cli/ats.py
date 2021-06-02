@@ -53,7 +53,7 @@ class ATSParams(object):
         if len(bam) == 1 and os.path.isdir(bam[0]):
             self.utr = Index(bam[0])
         else:
-            self.utr = load_utr(utr)
+            self.utr = load_utr(utr, debug)
             self.bam = self.check_path(bam)
 
         self.n_max_ats = n_max_ats
@@ -98,7 +98,7 @@ class ATSParams(object):
             yield i
 
     def __len__(self):
-        return len(self.utr) if not self.debug else 5
+        return len(self.utr) # if not self.debug else 5
 
     @staticmethod
     def __format_reads_to_relative__(reads: List, utr) -> List[int]:
@@ -369,7 +369,8 @@ def ats(
         max_unif_ws = max_unif_ws,
         max_beta = max_beta,
         fixed_inference_flag = fixed_inference,
-        max_reads = max_reads
+        max_reads = max_reads,
+        debug = debug
     )
 
     if debug:
@@ -424,7 +425,6 @@ def ats(
     if errors:
         with gzip.open(f"{output}.error_data.json.gz", "wt+") as w:
             json.dump(errors, w, indent = 4)
-
 
     log.info("DONE")
 

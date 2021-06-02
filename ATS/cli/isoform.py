@@ -4,13 +4,13 @@ u"""
 Created at 2021.05.06 by Zhang
 """
 import gzip
-from multiprocessing import Process, Queue, cpu_count
+from multiprocessing import Process, Queue, cpu_count, Pool
 from typing import List
 
 import click
 from logger import init_logger, log
 from rich import print
-from rich.progress import Progress
+from rich.progress import Progress, track
 from src.reader import check_bam, load_ats
 
 from ats.isoform import GTFUtils, assign_isoform
@@ -159,9 +159,18 @@ def run(
             log.exception(err)
             print(utr)
 
-        if len(res) > 5:
-            break
     return res
+
+
+def runner(args):
+    return run(
+        args[0],
+        args[1],
+        args[2],
+        args[3],
+        args[4],
+        args[5]
+    )
 
 
 @click.command()
@@ -213,6 +222,11 @@ def run(
     default = 1,
     help=""" How many cpu to use. """
 )
+@click.option(
+    "-j", "--julia",
+    is_flag = True,
+    help=""" Whether input file is come from julia verison. """
+)
 @click.argument("bams", nargs = -1, type=click.Path(exists=True), required=True)
 def isoform(
     ats: str,
@@ -223,6 +237,7 @@ def isoform(
     min_frag_length: int,
     processes: int,
     debug: bool, 
+    julia: bool,
     bams: List[str],
 ):
     u"""
@@ -241,7 +256,7 @@ def isoform(
             exit(1)
 
     gtf = GTFUtils(gtf)
-    ats = load_ats(ats)
+    ats = load_ats(ats, julia=julia)
 
     if debug:
         res = run(
@@ -255,43 +270,69 @@ def isoform(
         print(res)
         exit(0)
 
-    input_queue = Queue()
-    output_queue = Queue()
+    # input_queue = Queue()
+    # output_queue = Queue()
 
-    # generate consumers
-    consumers = []
-    for _ in range(processes):
-        p = Process(
-            target=consumer, 
-            args=(
-                input_queue, 
-                output_queue,
-                gtf,
-                bams,
-                mu_f,
-                sigma_f,
-                min_frag_length,
-            )
-        )
-        p.daemon = True
-        p.start()
-        consumers.append(p)
+    # # generate consumers
+    # consumers = []
+    # for _ in range(processes):
+    #     p = Process(
+    #         target=consumer, 
+    #         args=(
+    #             input_queue, 
+    #             output_queue,
+    #             gtf,
+    #             bams,
+    #             mu_f,
+    #             sigma_f,
+    #             min_frag_length,
+    #         )
+    #     )
+    #     p.daemon = True
+    #     p.start()
+    #     consumers.append(p)
 
-    # producer to assign task
-    for utr, region in ats.items():
-        input_queue.put([utr, region])
+    # # producer to assign task
+    # for utr, region in ats.items():
+    #     input_queue.put([utr, region])
 
-    with Progress() as progress:
-        task = progress.add_task("Computing...", total=len(ats))
+    # with Progress() as progress:
+    #     task = progress.add_task("Computing...", total=len(ats))
 
-        with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
-            w.write("ats\tgene_id\ttranscript_ids\tws\n")
+    #     with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
+    #         w.write("ats\tgene_id\ttranscript_ids\tws\n")
             
-            while not progress.finished:
-                res = output_queue.get(block=True, timeout=None)
-                [w.write(i + "\n") for i in res]
+    #         while not progress.finished:
+    #             res = output_queue.get(block=True, timeout=None)
+    #             [w.write(i + "\n") for i in res]
                 
-                progress.update(task, advance = 1)
+    #             progress.update(task, advance = 1)
+
+    keys = sorted(ats.keys())
+
+    cmds = []
+    bk = len(ats) // processes
+    for i in range(0, len(keys), bk):
+        cmds.append([
+            {j: ats[j] for j in keys[i:i+bk]},
+            gtf,
+            bams,
+            mu_f,
+            sigma_f,
+            min_frag_length,
+        ])
+
+    res = []
+    with Pool(processes) as p:
+        for i in list(track(p.imap_unordered(runner, cmds), total=len(cmds))):
+            res += i
+
+    with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
+        w.write("ats\tgene_id\ttranscript_ids\tws\n")
+        
+        w.write("\n".join(res))
+
+
     log.info("DONE")
 
 

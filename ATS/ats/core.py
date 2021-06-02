@@ -5,8 +5,6 @@ Modified at 2021.04.25 by Zhang
 
 Core ATS model
 """
-from __future__ import annotations
-
 import json
 from math import pi
 from typing import Dict, List
@@ -19,6 +17,8 @@ from scipy.signal import find_peaks
 
 from logger import log as logger
 
+import pyximport; pyximport.install()
+import ats.entropy as cent
 
 
 ################### Part 3: ATS mixture #####################################
@@ -66,6 +66,11 @@ class Parameters:
                 val = str(val)
             res.append(val)
         return "\t".join(res)
+
+
+def __entropy__(labels):
+    # labels = np.divide(labels, len(labels))
+    return -1 * np.sum(np.multiply(labels, np.log(labels)))
 
 
 # ats mixture model inference
@@ -151,25 +156,22 @@ class AtsModel(object):
         replace scipt.stats.norm
         It's seems have performance issues
         """
-        u = (np.array(x)-mu)/np.abs(sigma)
+        sigma = np.abs(sigma)
+        u = (np.array(x)-mu)/sigma
         y = np.multiply(
-            np.divide(1, np.multiply(np.sqrt(2 * pi), np.abs(sigma))),
+            np.divide(1, np.multiply(np.sqrt(2 * pi), sigma)),
             np.exp(-u * u/2)
         )
         return np.log(y) if do_log else y
- 
+
     @classmethod
-    #@profile
+    @profile
     def entropy(cls, mtx):
         """ Computes entropy of label distribution. """
+        # return np.sum([__entropy__(x) for x in mtx])
+        return cent.entropy(mtx)
 
-        def __entropy__(labels):
-            labels = np.divide(labels, len(labels))
-            return -1 * np.sum(np.multiply(labels, np.log(labels)))
-        
-        return np.sum([__entropy__(x) for x in mtx])
-
-    #@profile
+    @profile
     def cal_z_k(self, para, k, log_zmat):
         # K = len(ws) - 1  # last component is uniform component
         ws = para.ws
@@ -192,7 +194,7 @@ class AtsModel(object):
         return Z
 
     # maximize ws given Z
-    #@profile
+    @profile
     def maximize_ws(self, Z):
         ws = np.sum(Z, axis=0) / Z.shape[0]
         if ws[-1] > self.max_unif_ws:
@@ -200,7 +202,7 @@ class AtsModel(object):
             ws[-1] = self.max_unif_ws
         return ws
 
-    #@profile
+    @profile
     def mstep(self, para, Z, k):
         u"""
 
@@ -238,7 +240,7 @@ class AtsModel(object):
         return para
 
     # mstep when alpha_arr and beta_arr are fixed
-    #@profile
+    @profile
     def mstep_fixed(self, para, Z, k):
         # avoid division by zero
         if np.sum(Z[:, k]) < 1e-8:
@@ -250,13 +252,13 @@ class AtsModel(object):
         return para
 
     @staticmethod
-    #@profile
+    @profile
     def elbo(log_zmat, Z):
         return np.add(AtsModel.exp_log_lik(log_zmat, Z), AtsModel.entropy(Z))
 
     # calculate the expected log joint likelihood
     @staticmethod
-    #@profile
+    @profile
     def exp_log_lik(log_zmat, Z):
         return np.sum(np.multiply(Z[Z != 0], log_zmat[Z != 0]))
 
@@ -308,7 +310,7 @@ class AtsModel(object):
         return res
 
     # perform inference for K components
-    #@profile
+    @profile
     def em_algo(self, para, fixed_inference_flag=False):
         u"""
         Call mstep and msted_fixed
@@ -339,7 +341,7 @@ class AtsModel(object):
 
             lb_new = self.elbo(log_zmat, Z)
             lb_arr.append(lb_new)
-            
+
             if np.isposinf(lb_new) or np.isneginf(lb_new):
                 lb = Inf
                 break
@@ -369,7 +371,7 @@ class AtsModel(object):
 
         return para
 
-    #@profile
+    @profile
     def sample_alpha(self, n_ats):
         kernel = FFTKDE(kernel = "gaussian", bw='silverman').fit(self.st_arr)
         x_arr = np.arange(-100, self.L + 100)  # extend to include peaks in 0 or L-1
@@ -394,7 +396,7 @@ class AtsModel(object):
             ws[-1] = self.max_unif_ws
         return ws
 
-    #@profile
+    @profile
     def init_para(self, n_ats):
         alpha_arr = self.sample_alpha(n_ats)
 
@@ -405,7 +407,7 @@ class AtsModel(object):
         return para
 
     # remove components with weight less than min_ws
-    #@profile
+    @profile
     def rm_component(self, para):
         rm_inds = [i for i in range(para.K) if para.ws[i] < self.min_ws]
         if len(rm_inds) == 0:
@@ -420,7 +422,7 @@ class AtsModel(object):
         para = self.fixed_inference(para)
         return para
 
-    #@profile
+    @profile
     def em_optim0(self, n_ats):
         n_trial = 5
         lb_arr = np.full(n_trial, self.neg_infinite)
@@ -442,7 +444,7 @@ class AtsModel(object):
 
         return res
 
-    #@profile
+    @profile
     def get_label(self, para, st_arr=None):
         if st_arr is None:
             st_arr = self.st_arr
@@ -455,7 +457,7 @@ class AtsModel(object):
         label_arr = np.argmax(Z, axis=1)
         return label_arr
 
-    #@profile
+    @profile
     def run(self) -> Parameters:
         if not self.st_arr:
             return None

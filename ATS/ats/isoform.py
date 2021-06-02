@@ -14,7 +14,7 @@ import numpy as np
 import pysam
 from logger import log
 from src.convert import Coordinate, TreeNode, Window, WinList
-from src.loci import BED
+from src.loci import BED, GenomicLoci
 
 np.seterr(divide='ignore', invalid='ignore')
 
@@ -476,7 +476,7 @@ class GTFUtils(object):
                 w = open("/tmp/sorted.gtf")
 
             with open(old_input_gtf) as r:
-                for line in tqdm(r):
+                for line in r:
                     if line.startswith("#"):
                         w.write(line)
                         continue

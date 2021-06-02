@@ -8,6 +8,7 @@ Preprocess of UTR bed and BAM, to get the data for model
 import gzip
 import pickle
 import os
+import random
 import re
 from typing import Dict, List
 
@@ -17,20 +18,20 @@ from rich.progress import Progress
 from src.loci import BED, Reads
 
 
-def load_ats(path: str) -> Dict:
+def load_ats(path: str, julia: bool = False) -> Dict:
     u"""
     load ats modeling output data
     :param path: the path to ats modeling output ifle
     :return dict: keys -> utr region; values -> list of splice region
     """
+    
     beds = {}
     header = True
-
     with Progress() as progress:
         task_id = progress.add_task(f"Reading {os.path.basename(path)}", total=os.path.getsize(path))
 
         with open(path) as r:
-            for line in r:
+            for curr_idx, line in enumerate(r):
                 if header:
                     header = False
                     continue
@@ -38,15 +39,20 @@ def load_ats(path: str) -> Dict:
                 line = line.strip().split("\t")
                 
                 site = re.split(r"[:-]", line[0])
-                # print(site)
+
                 strand = site[-1]
 
                 if strand != "+":
                     strand = "-"
                 chrom, start_pos, end_pos = site[0], int(site[1]), int(site[2])
 
-                utr = BED(chrom, start_pos, end_pos, strand, name = line[2], record_id = line[2])
-                alpha = line[3].split(",")
+                utr = BED(
+                    chrom, start_pos, end_pos, strand, 
+                    name = line[2] if not julia else line[0], 
+                    record_id = line[2] if not julia else str(curr_idx)
+                )
+
+                alpha = line[3].split(",") if not julia else line[2].split(",")
 
                 if len(alpha) > 1:
                     if utr not in beds.keys():
@@ -63,9 +69,7 @@ def load_ats(path: str) -> Dict:
                     except Exception as e:
                         print(e)
                         pass
-
     return beds
-
 
 def load_utr(path: str, debug: bool = False) -> List[BED]:
     u"""
@@ -88,6 +92,9 @@ def load_utr(path: str, debug: bool = False) -> List[BED]:
 
                 res.append(BED.create(line))
 
+    if not debug:
+        random.seed(42)
+        random.shuffle(res)
     return res
 
 

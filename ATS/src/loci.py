@@ -21,6 +21,7 @@ class Region(object):
     __slots__ = ["chromosome", "start", "end", "strand"]
 
     def __init__(self, chromosome: str, start: int, end: int, strand: str):
+        start, end = int(start), int(end)
         assert strand in ("+", "-"), "strand must be + or -"
         assert end >= start, "end must bigger than start, current -> start: {}, end: {}".format(start, end)
 
@@ -97,6 +98,16 @@ class Region(object):
         return self.start - tolerance <= other.start <= other.end <= self.end + tolerance
         
 
+class GenomicLoci(Region):
+
+    def __init__(
+        self, chromosome: str, 
+        start: int, end: int, 
+        strand: str, gtf_line: str
+    ):
+        super(GenomicLoci, self).__init__(chromosome, start, end, strand)
+        self.gtf_line = gtf_line
+
 class GTF(Region):
     u"""
     Created at 2021.04.27 by Zhang
@@ -110,7 +121,7 @@ class GTF(Region):
         self, 
         chromosome: str, 
         start: int, end: int, 
-        strand: int, 
+        strand: str, 
         source: str,
         attrs: dict = None
     ):
