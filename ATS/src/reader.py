@@ -71,7 +71,7 @@ def load_ats(path: str, julia: bool = False) -> Dict:
                         pass
     return beds
 
-def load_utr(path: str, debug: bool = False) -> List[BED]:
+def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED]:
     u"""
     Load extracted UTR from bed file
     :param path: path to bed file
@@ -90,7 +90,10 @@ def load_utr(path: str, debug: bool = False) -> List[BED]:
                     return res
                 progress.update(task_id, advance=len(str.encode(line)))
 
-                res.append(BED.create(line))
+                b = BED.create(line)
+                if len(b) > utr_length:
+                    continue
+                res.append(b)
 
     if not debug:
         random.seed(42)
@@ -139,7 +142,7 @@ def load_reads(bam: List[str], region: BED) -> Dict:
         if isinstance(b, str):
             r.close()
 
-    return res
+    return {i: j for i, j in res.items() if region.is_cover(i, 0) and region.is_cover(j, 0)}
 
 
 def check_bam(path: str) -> bool:

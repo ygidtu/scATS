@@ -33,8 +33,6 @@ class ATSParams(object):
         n_max_ats: int = 5, 
         n_min_ats: int = 1,
         utr_length: int = 2000,
-        mu_f: int = 300,
-        sigma_f: int = 50,
         min_ws: float = 0.01,
         max_unif_ws: float = 0.1,
         max_beta: int = 50,
@@ -53,15 +51,12 @@ class ATSParams(object):
         if len(bam) == 1 and os.path.isdir(bam[0]):
             self.utr = Index(bam[0])
         else:
-            self.utr = load_utr(utr, debug)
+            self.utr = load_utr(utr, utr_length=utr_length, debug=debug)
             self.bam = self.check_path(bam)
 
         self.n_max_ats = n_max_ats
         self.n_min_ats = n_min_ats
         self.utr_length = utr_length
-        self.mu_f = mu_f
-        self.sigma_f = sigma_f
-        self.min_ws = min_ws
         self.min_ws = min_ws
         self.max_unif_ws = max_unif_ws
         self.max_beta = max_beta
@@ -148,8 +143,6 @@ class ATSParams(object):
                 n_min_ats=self.n_min_ats,
                 st_arr=st_arr,
                 utr_length=self.utr_length,
-                mu_f=self.mu_f,
-                sigma_f=self.sigma_f,
                 min_ws=self.min_ws,
                 max_unif_ws=self.max_unif_ws,
                 max_beta=self.max_beta,
@@ -275,18 +268,6 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     help=""" The estimate length of gene. """
 )
 @click.option(
-    "--mu-f",
-    type=int,
-    default = 300,
-    help=""" The mean of fragment length. """
-)   
-@click.option(
-    "--sigma-f",
-    type=int,
-    default = 50,
-    help=""" The standard deviation of fragment length. """
-)
-@click.option(
     "--min-ws",
     type=float,
     default = 0.01,
@@ -336,8 +317,6 @@ def ats(
     n_max_ats: int, 
     n_min_ats: int,
     utr_length: int,
-    mu_f: int,
-    sigma_f: int,
     min_ws: float,
     max_unif_ws: float,
     max_beta: int,
@@ -363,8 +342,6 @@ def ats(
         n_max_ats = n_max_ats, 
         n_min_ats = n_min_ats,
         utr_length = utr_length,
-        mu_f = mu_f,
-        sigma_f = sigma_f,
         min_ws = min_ws,
         max_unif_ws = max_unif_ws,
         max_beta = max_beta,

@@ -270,67 +270,67 @@ def isoform(
         print(res)
         exit(0)
 
-    # input_queue = Queue()
-    # output_queue = Queue()
+    input_queue = Queue()
+    output_queue = Queue()
 
-    # # generate consumers
-    # consumers = []
-    # for _ in range(processes):
-    #     p = Process(
-    #         target=consumer, 
-    #         args=(
-    #             input_queue, 
-    #             output_queue,
-    #             gtf,
-    #             bams,
-    #             mu_f,
-    #             sigma_f,
-    #             min_frag_length,
-    #         )
-    #     )
-    #     p.daemon = True
-    #     p.start()
-    #     consumers.append(p)
+    # generate consumers
+    consumers = []
+    for _ in range(processes):
+        p = Process(
+            target=consumer, 
+            args=(
+                input_queue, 
+                output_queue,
+                gtf,
+                bams,
+                mu_f,
+                sigma_f,
+                min_frag_length,
+            )
+        )
+        p.daemon = True
+        p.start()
+        consumers.append(p)
 
-    # # producer to assign task
-    # for utr, region in ats.items():
-    #     input_queue.put([utr, region])
+    # producer to assign task
+    for utr, region in ats.items():
+        input_queue.put([utr, region])
 
-    # with Progress() as progress:
-    #     task = progress.add_task("Computing...", total=len(ats))
+    with Progress() as progress:
+        task = progress.add_task("Computing...", total=len(ats))
 
-    #     with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
-    #         w.write("ats\tgene_id\ttranscript_ids\tws\n")
+        with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
+            w.write("ats\tgene_id\ttranscript_ids\tws\n")
             
-    #         while not progress.finished:
-    #             res = output_queue.get(block=True, timeout=None)
-    #             [w.write(i + "\n") for i in res]
+            while not progress.finished:
+                res = output_queue.get(block=True, timeout=None)
+                [w.write(i + "\n") for i in res]
                 
-    #             progress.update(task, advance = 1)
+                progress.update(task, advance = 1)
 
-    keys = sorted(ats.keys())
+    # keys = sorted(ats.keys())
 
-    cmds = []
-    bk = len(ats) // processes
-    for i in range(0, len(keys), bk):
-        cmds.append([
-            {j: ats[j] for j in keys[i:i+bk]},
-            gtf,
-            bams,
-            mu_f,
-            sigma_f,
-            min_frag_length,
-        ])
+    # cmds = []
+    # bk = len(ats) // processes
+    # for i in range(0, len(keys), bk):
+    #     cmds.append([
+    #         {j: ats[j] for j in keys[i:i+bk]},
+    #         gtf,
+    #         bams,
+    #         mu_f,
+    #         sigma_f,
+    #         min_frag_length,
+    #     ])
 
-    res = []
-    with Pool(processes) as p:
-        for i in list(track(p.imap_unordered(runner, cmds), total=len(cmds))):
-            res += i
+    # res = []
+    # with Pool(processes) as p:
+    #     for i in list(track(p.imap_unordered(runner, cmds), total=len(cmds))):
+    #         res += i
 
-    with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
-        w.write("ats\tgene_id\ttranscript_ids\tws\n")
+    # with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
+    #     w.write("ats\tgene_id\ttranscript_ids\tws\n")
         
-        w.write("\n".join(res))
+    #     w.write("\n".join(res))
 
 
     log.info("DONE")

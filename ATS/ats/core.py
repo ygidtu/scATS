@@ -6,19 +6,19 @@ Modified at 2021.04.25 by Zhang
 Core ATS model
 """
 import json
-from math import pi
-from typing import Dict, List
+from math import pi, log, e
+from typing import Dict, List, Optional
 
 import numpy as np
 
-from KDEpy import FFTKDE
+from scipy import stats
 from numpy.core.numeric import Inf
 from scipy.signal import find_peaks
 
 from logger import log as logger
 
-import pyximport; pyximport.install()
-import ats.entropy as cent
+# import pyximport; pyximport.install()
+# import ats.entropy as cent
 
 
 ################### Part 3: ATS mixture #####################################
@@ -68,11 +68,6 @@ class Parameters:
         return "\t".join(res)
 
 
-def __entropy__(labels):
-    # labels = np.divide(labels, len(labels))
-    return -1 * np.sum(np.multiply(labels, np.log(labels)))
-
-
 # ats mixture model inference
 # using a class
 class AtsModel(object):
@@ -82,8 +77,6 @@ class AtsModel(object):
         n_min_ats=1,
         st_arr=None,
         utr_length=2000,
-        mu_f=300,
-        sigma_f=50,
         min_ws=0.01,
         max_unif_ws=0.1,
         max_beta=50,
@@ -97,10 +90,6 @@ class AtsModel(object):
 
         # information for all DNA fragments, must be n_frag x 1 vector if specified
         self.st_arr = [x for x in st_arr if 0 <= x < utr_length]  # l, start location of each DNA fragment, from 5' to 3'on the 5'-UTR
-
-        # fragment size information
-        self.mu_f = mu_f  # fragment length mean
-        self.sigma_f = sigma_f  # fragment length standard deviation
 
         # pa site information
         self.min_ws = min_ws  # minimum weight of ATS site
@@ -165,13 +154,13 @@ class AtsModel(object):
         return np.log(y) if do_log else y
 
     @classmethod
-    @profile
+    #@profile
     def entropy(cls, mtx):
         """ Computes entropy of label distribution. """
         # return np.sum([__entropy__(x) for x in mtx])
-        return cent.entropy(mtx)
+        return entropy(mtx)
 
-    @profile
+    #@profile
     def cal_z_k(self, para, k, log_zmat):
         # K = len(ws) - 1  # last component is uniform component
         ws = para.ws
@@ -194,7 +183,7 @@ class AtsModel(object):
         return Z
 
     # maximize ws given Z
-    @profile
+    #@profile
     def maximize_ws(self, Z):
         ws = np.sum(Z, axis=0) / Z.shape[0]
         if ws[-1] > self.max_unif_ws:
@@ -202,7 +191,7 @@ class AtsModel(object):
             ws[-1] = self.max_unif_ws
         return ws
 
-    @profile
+    #@profile
     def mstep(self, para, Z, k):
         u"""
 
@@ -240,7 +229,7 @@ class AtsModel(object):
         return para
 
     # mstep when alpha_arr and beta_arr are fixed
-    @profile
+    #@profile
     def mstep_fixed(self, para, Z, k):
         # avoid division by zero
         if np.sum(Z[:, k]) < 1e-8:
@@ -252,13 +241,13 @@ class AtsModel(object):
         return para
 
     @staticmethod
-    @profile
+    #@profile
     def elbo(log_zmat, Z):
-        return np.add(AtsModel.exp_log_lik(log_zmat, Z), AtsModel.entropy(Z))
+        return np.add(AtsModel.exp_log_lik(log_zmat, Z), np.sum(stats.entropy(Z, axis=1)))
 
     # calculate the expected log joint likelihood
     @staticmethod
-    @profile
+    #@profile
     def exp_log_lik(log_zmat, Z):
         return np.sum(np.multiply(Z[Z != 0], log_zmat[Z != 0]))
 
@@ -310,7 +299,7 @@ class AtsModel(object):
         return res
 
     # perform inference for K components
-    @profile
+    #@profile
     def em_algo(self, para, fixed_inference_flag=False):
         u"""
         Call mstep and msted_fixed
@@ -351,11 +340,6 @@ class AtsModel(object):
             else:
                 lb = lb_new
 
-        # if i == self.nround:
-        #     logger.debug(f'Run all {i + 1} iterations. lb={lb}')
-        # else:
-        #     logger.debug(f'Converge in  {i + 1} iterations. lb={lb}')
-
         bic = AtsModel.cal_bic(log_zmat, Z)
 
         sorted_inds = np.argsort(para.alpha_arr)
@@ -371,11 +355,11 @@ class AtsModel(object):
 
         return para
 
-    @profile
+    #@profile
     def sample_alpha(self, n_ats):
-        kernel = FFTKDE(kernel = "gaussian", bw='silverman').fit(self.st_arr)
+        kernel = stats.gaussian_kde(self.st_arr)
         x_arr = np.arange(-100, self.L + 100)  # extend to include peaks in 0 or L-1
-        y_arr = kernel.evaluate(x_arr)
+        y_arr = kernel.pdf(range(-100, self.L + 100))
         peak_inds, _ = find_peaks(y_arr)
         peaks = x_arr[peak_inds]
         peaks_ws = np.divide(y_arr[peak_inds], np.sum(y_arr[peak_inds]))
@@ -396,7 +380,7 @@ class AtsModel(object):
             ws[-1] = self.max_unif_ws
         return ws
 
-    @profile
+    #@profile
     def init_para(self, n_ats):
         alpha_arr = self.sample_alpha(n_ats)
 
@@ -407,7 +391,7 @@ class AtsModel(object):
         return para
 
     # remove components with weight less than min_ws
-    @profile
+    #@profile
     def rm_component(self, para):
         rm_inds = [i for i in range(para.K) if para.ws[i] < self.min_ws]
         if len(rm_inds) == 0:
@@ -422,7 +406,7 @@ class AtsModel(object):
         para = self.fixed_inference(para)
         return para
 
-    @profile
+    #@profile
     def em_optim0(self, n_ats):
         n_trial = 5
         lb_arr = np.full(n_trial, self.neg_infinite)
@@ -444,7 +428,7 @@ class AtsModel(object):
 
         return res
 
-    @profile
+    #@profile
     def get_label(self, para, st_arr=None):
         if st_arr is None:
             st_arr = self.st_arr
@@ -457,8 +441,8 @@ class AtsModel(object):
         label_arr = np.argmax(Z, axis=1)
         return label_arr
 
-    @profile
-    def run(self) -> Parameters:
+    #@profile
+    def run(self) -> Optional[Parameters]:
         if not self.st_arr:
             return None
         if self.max_beta < self.step_size:
