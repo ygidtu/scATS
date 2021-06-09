@@ -10,12 +10,13 @@ import json
 import math
 import os
 import random
+from time import time
 from multiprocessing import Process, Queue, cpu_count
 from typing import List, Optional, Union
 
 import click
 from logger import init_logger, log
-from rich.progress import Progress
+from rich.progress import *
 from src.reader import Index, check_bam, load_reads, load_utr
 
 from ats.core import AtsModel, Parameters
@@ -175,9 +176,12 @@ class ATSParams(object):
         Factory function to execute the ATS model and format results
         """
         if m:
+            begin = time()
             res = m.run()
+            st = (time() - begin) * 1000
+            n_st = len(m.st_arr)
             if res:
-                return self.format_res(idx, res)
+                return f"{self.format_res(idx, res)}\t{n_st}\t{st}"
         return None
 
 
@@ -380,7 +384,17 @@ def ats(
     for i in params:
         input_queue.put(i)
     
-    with Progress() as progress:
+    progress = Progress(
+        "[progress.description]{task.description}",
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}% ({task.completed}/{task.total})",
+        TextColumn("| Elapsed:"),
+        TimeElapsedColumn(),
+        TextColumn("| Remaining:"),
+        TimeRemainingColumn(),
+    )
+
+    with progress:
         task = progress.add_task("Computing...", total=len(params))
         with open(output, "w+") as w:
             header = '\t'.join(params.keys())
@@ -390,6 +404,7 @@ def ats(
                 res = output_queue.get(block=True, timeout=None)
                 if res:
                     w.write(f"{res}\n")
+                    w.flush()
 
                 progress.update(task, advance = 1)
 

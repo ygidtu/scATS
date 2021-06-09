@@ -365,7 +365,7 @@ class Reads(Region):
                 pass
 
         return cls(
-            ref=record.reference_id,
+            ref=record.reference_name,
             start=record.reference_start + 1,
             end = record.reference_end + 1,
             strand = cls.__determine_strand__(record),

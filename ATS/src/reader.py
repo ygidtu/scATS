@@ -10,10 +10,10 @@ import pickle
 import os
 import random
 import re
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import pysam
-from rich.progress import Progress
+from rich.progress import *
 
 from src.loci import BED, Reads
 
@@ -24,10 +24,22 @@ def load_ats(path: str, julia: bool = False) -> Dict:
     :param path: the path to ats modeling output ifle
     :return dict: keys -> utr region; values -> list of splice region
     """
-    
+
+    progress = Progress(
+        "[progress.description]{task.description}",
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        TextColumn("| Elapsed:"),
+        TimeElapsedColumn(),
+        TextColumn("| Remaining:"),
+        TimeRemainingColumn(),
+        TextColumn("| Speed: "),
+        TransferSpeedColumn()
+    )
+
     beds = {}
     header = True
-    with Progress() as progress:
+    with progress:
         task_id = progress.add_task(f"Reading {os.path.basename(path)}", total=os.path.getsize(path))
 
         with open(path) as r:
@@ -60,16 +72,15 @@ def load_ats(path: str, julia: bool = False) -> Dict:
                     try:
                         for x in alpha:
                             if x != "":
-                                s = int(float(x))
-                                
-                                if strand == "+":
-                                    beds[utr].append(BED(chrom, s, s + 1, strand, line[0], str(len(beds) + 1))) 
-                                else:
-                                    beds[utr].append(BED(chrom, s - 1, s, strand, line[0], str(len(beds) + 1)))
+                                x = int(float(x))
+                                s = utr.start + x if strand == "+" else utr.end - x
+
+                                beds[utr].append(BED(chrom, s - 1, s, strand, line[0], str(len(beds) + 1)))
                     except Exception as e:
                         print(e)
                         pass
     return beds
+
 
 def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED]:
     u"""
@@ -79,8 +90,18 @@ def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED
     """
 
     res = []
-
-    with Progress() as progress:
+    progress = Progress(
+        "[progress.description]{task.description}",
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        TextColumn("| Elapsed:"),
+        TimeElapsedColumn(),
+        TextColumn("| Remaining:"),
+        TimeRemainingColumn(),
+        TextColumn("| Speed: "),
+        TransferSpeedColumn()
+    )
+    with progress:
         task_id = progress.add_task(f"Reading {os.path.basename(path)}", total=os.path.getsize(path))
 
         with gzip.open(path, "rt") if path.endswith("gz") else open(path) as r:

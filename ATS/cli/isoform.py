@@ -4,13 +4,16 @@ u"""
 Created at 2021.05.06 by Zhang
 """
 import gzip
-from multiprocessing import Process, Queue, cpu_count, Pool
+import math
+import random
+from time import time
+from multiprocessing import Process, Queue, cpu_count
 from typing import List
 
 import click
 from logger import init_logger, log
 from rich import print
-from rich.progress import Progress, track
+from rich.progress import *
 from src.reader import check_bam, load_ats
 
 from ats.isoform import GTFUtils, assign_isoform
@@ -23,13 +26,19 @@ def consumer(
     bams: List[str], 
     mu_f: int, 
     sigma_f: int, 
-    min_frag_length: int
+    min_frag_length: int,
+    max_reads
 ):
     u"""
     consumer
     """
     while True:
         utr, region = input_queue.get()
+
+        if utr is None and region is None:
+            # print(f"{process} break")
+            break
+
         res = []
         
         try:
@@ -47,6 +56,13 @@ def consumer(
 
             iso_tbl.set_bams(bams)
             reads = iso_tbl.reads(utr)
+
+            if len(reads) > max_reads:
+                random.seed(42)
+                keys = list(reads.keys())
+                keys = random.sample(keys, int(max_reads))
+
+                reads = {i: reads[i] for i in keys}
             
             r1_wins_list = []
             r2_wins_list = []
@@ -61,33 +77,35 @@ def consumer(
                     frag_inds.append(a)
 
             for r in region:
-                ats_pos = (r.start if r.strand == "+" else r.end) - iso_tbl.gene.start
-                iso_ws = assign_isoform(
-                    ats_pos, 
-                    iso_wins_list, 
-                    r1_wins_list, 
-                    r2_wins_list, 
-                    frag_inds,
-                    mu_f, 
-                    sigma_f, 
-                    min_frag_len=min_frag_length
-                )
-
-                ws = []
-                ids = []
+                begin = time()
                 gene_id = iso_tbl.get(0)
-                for i, j in enumerate(iso_ws):
-                    if j > 0:
-                        ws.append(str(j))
-                        ids.append(iso_tbl.get(i))
+                if r1_wins_list or r2_wins_list:
+                    ats_pos = (r.start if r.strand == "+" else r.end) - iso_tbl.gene.start
+                    iso_ws = assign_isoform(
+                        ats_pos, 
+                        iso_wins_list, 
+                        r1_wins_list, 
+                        r2_wins_list, 
+                        frag_inds,
+                        mu_f, 
+                        sigma_f, 
+                        min_frag_len=min_frag_length
+                    )
 
-                if ws:
-                    res.append(f"{r.to_str()}\t{gene_id}\t{','.join(ids)}\t{','.join(ws)}")
-                else:
-                    res.append(f"{r.to_str()}\t{gene_id}\t.\t.")
+                    ws = []
+                    ids = []
+                    for i, j in enumerate(iso_ws):
+                        if j > 0:
+                            ws.append(str(j))
+                            ids.append(iso_tbl.get(i))
+
+                    if ws:
+                        res.append(f"{r.to_str()}\t{gene_id}\t{','.join(ids)}\t{','.join(ws)}\t{(time() - begin) * 1000}\t{len(reads)}")
+                        continue
+
+                res.append(f"{r.to_str()}\t{gene_id}\t.\t.\t{(time() - begin) * 1000}\t{len(reads)}")
         except Exception as err:
             log.exception(err)
-            print(utr)
         output_queue.put(res)
 
 
@@ -227,6 +245,12 @@ def runner(args):
     is_flag = True,
     help=""" Whether input file is come from julia verison. """
 )
+@click.option(
+    "--max-reads",
+    type=float,
+    default = math.inf,
+    help=""" The maximum reads used in single UTR, default use all reads. """
+)
 @click.argument("bams", nargs = -1, type=click.Path(exists=True), required=True)
 def isoform(
     ats: str,
@@ -238,6 +262,7 @@ def isoform(
     processes: int,
     debug: bool, 
     julia: bool,
+    max_reads: float,
     bams: List[str],
 ):
     u"""
@@ -286,6 +311,7 @@ def isoform(
                 mu_f,
                 sigma_f,
                 min_frag_length,
+                max_reads,
             )
         )
         p.daemon = True
@@ -296,7 +322,21 @@ def isoform(
     for utr, region in ats.items():
         input_queue.put([utr, region])
 
-    with Progress() as progress:
+    for _ in range(processes):
+        input_queue.put([None, None])
+
+    
+    progress = Progress(
+        "[progress.description]{task.description}",
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}% ({task.completed}/{task.total})",
+        TextColumn("| Elapsed:"),
+        TimeElapsedColumn(),
+        TextColumn("| Remaining:"),
+        TimeRemainingColumn(),
+    )
+
+    with progress:
         task = progress.add_task("Computing...", total=len(ats))
 
         with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
@@ -305,33 +345,9 @@ def isoform(
             while not progress.finished:
                 res = output_queue.get(block=True, timeout=None)
                 [w.write(i + "\n") for i in res]
+                w.flush()
                 
                 progress.update(task, advance = 1)
-
-    # keys = sorted(ats.keys())
-
-    # cmds = []
-    # bk = len(ats) // processes
-    # for i in range(0, len(keys), bk):
-    #     cmds.append([
-    #         {j: ats[j] for j in keys[i:i+bk]},
-    #         gtf,
-    #         bams,
-    #         mu_f,
-    #         sigma_f,
-    #         min_frag_length,
-    #     ])
-
-    # res = []
-    # with Pool(processes) as p:
-    #     for i in list(track(p.imap_unordered(runner, cmds), total=len(cmds))):
-    #         res += i
-
-    # with gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+") as w:
-    #     w.write("ats\tgene_id\ttranscript_ids\tws\n")
-        
-    #     w.write("\n".join(res))
-
 
     log.info("DONE")
 

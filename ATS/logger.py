@@ -15,7 +15,10 @@ log = logging.getLogger(("rich"))
 def init_logger(level = "NOTSET"):
     FORMAT = "%(message)s"
     logging.basicConfig(
-        level=level, format=FORMAT, datefmt="[%X]", handlers=[RichHandler()]
+        level=level, 
+        format=FORMAT, 
+        datefmt="[%Y-%m-%d %H:%M:%S]", 
+        handlers=[RichHandler()]
     )
     global log
     log = logging.getLogger(("rich"))
