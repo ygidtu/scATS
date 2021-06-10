@@ -10,7 +10,6 @@ import json
 import math
 import os
 import random
-from time import time
 from multiprocessing import Process, Queue, cpu_count
 from typing import List, Optional, Union
 
@@ -176,12 +175,10 @@ class ATSParams(object):
         Factory function to execute the ATS model and format results
         """
         if m:
-            begin = time()
             res = m.run()
-            st = (time() - begin) * 1000
             n_st = len(m.st_arr)
             if res:
-                return f"{self.format_res(idx, res)}\t{n_st}\t{st}"
+                return f"{self.format_res(idx, res)}"
         return None
 
 

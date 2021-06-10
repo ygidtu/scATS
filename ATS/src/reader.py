@@ -10,12 +10,24 @@ import pickle
 import os
 import random
 import re
-from typing import Dict, List, Optional
+from typing import Dict, List
 
 import pysam
 from rich.progress import *
 
 from src.loci import BED, Reads
+
+
+def custom_progress():
+    return  Progress(
+        "[progress.description]{task.description}",
+        BarColumn(),
+        "[progress.percentage]{task.percentage:>3.0f}%",
+        TextColumn("| Remaining:"),
+        TimeRemainingColumn(),
+        TextColumn("| Speed: "),
+        TransferSpeedColumn()
+    )
 
 
 def load_ats(path: str, julia: bool = False) -> Dict:
@@ -25,22 +37,11 @@ def load_ats(path: str, julia: bool = False) -> Dict:
     :return dict: keys -> utr region; values -> list of splice region
     """
 
-    progress = Progress(
-        "[progress.description]{task.description}",
-        BarColumn(),
-        "[progress.percentage]{task.percentage:>3.0f}%",
-        TextColumn("| Elapsed:"),
-        TimeElapsedColumn(),
-        TextColumn("| Remaining:"),
-        TimeRemainingColumn(),
-        TextColumn("| Speed: "),
-        TransferSpeedColumn()
-    )
-
     beds = {}
     header = True
+    progress = custom_progress()
     with progress:
-        task_id = progress.add_task(f"Reading {os.path.basename(path)}", total=os.path.getsize(path))
+        task_id = progress.add_task(f"Reading... ", total=os.path.getsize(path))
 
         with open(path) as r:
             for curr_idx, line in enumerate(r):
@@ -90,19 +91,11 @@ def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED
     """
 
     res = []
-    progress = Progress(
-        "[progress.description]{task.description}",
-        BarColumn(),
-        "[progress.percentage]{task.percentage:>3.0f}%",
-        TextColumn("| Elapsed:"),
-        TimeElapsedColumn(),
-        TextColumn("| Remaining:"),
-        TimeRemainingColumn(),
-        TextColumn("| Speed: "),
-        TransferSpeedColumn()
-    )
+
+    progress = custom_progress()
+
     with progress:
-        task_id = progress.add_task(f"Reading {os.path.basename(path)}", total=os.path.getsize(path))
+        task_id = progress.add_task(f"Reading...  ", total=os.path.getsize(path))
 
         with gzip.open(path, "rt") if path.endswith("gz") else open(path) as r:
             for line in r:
@@ -122,48 +115,58 @@ def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED
     return res
 
 
-# @profile
 def load_reads(bam: List[str], region: BED) -> Dict:
     u"""
     Load reads, keys -> R1; values -> R2
     Only both R1
+
+    @2021.06.10 remove dict from this function, use list and sort to increase function speed
 
     :params bam: list of bam files
     :params region:
     """
     res = {}
     for b in bam:
-        paired = {}
         r = pysam.AlignmentFile(b) if isinstance(b, str) else b
 
         # fetch with until_eof is faster on large bam file according to 
         # https://pysam.readthedocs.io/en/latest/faq.html
+        r1s = []
+        r2s = []
+
         for rec in r.fetch(region.chromosome, region.start, region.end, until_eof=True):
             if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
                 continue
 
             if rec.is_read1:
-                r1 = Reads.create(rec)
-                if rec.query_name not in paired.keys():
-                    paired[rec.query_name] = r1
-                else:
-                    r2 = paired.pop(rec.query_name)
-                    if r1 and r2:
-                        res[r1] = r2
+                r1s.append(rec)
             else:
-                r2 = Reads.create(rec)
-
-                if rec.query_name not in paired.keys():
-                    paired[rec.query_name] = r2
-                else:
-                    r1 = paired.pop(rec.query_name)
-                    if r1 and r2:
-                        res[r1] = r2
+                r2s.append(rec)
 
         if isinstance(b, str):
             r.close()
 
-    return {i: j for i, j in res.items() if region.is_cover(i, 0) and region.is_cover(j, 0)}
+        r1s = sorted(r1s, key = lambda x: x.query_name)
+        r2s = sorted(r2s, key = lambda x: x.query_name)
+
+        i, j = 0, 0
+        while i < len(r1s) and j < len(r2s):
+            r1 = r1s[i]
+            r2 = r2s[j]
+
+            if r1.query_name < r2.query_name:
+                i += 1
+            elif r1.query_name > r2.query_name:
+                j += 1
+            else:
+                r1 = Reads.create(r1)
+                r2 = Reads.create(r2)
+                if r1 and r2 and region.is_cover(r1, 0) and region.is_cover(r2, 0):
+                    res[r1] = r2
+
+                i += 1
+
+    return res
 
 
 def check_bam(path: str) -> bool:

@@ -6,7 +6,6 @@ Created at 2021.05.06 by Zhang
 import gzip
 import math
 import random
-from time import time
 from multiprocessing import Process, Queue, cpu_count
 from typing import List
 
@@ -77,7 +76,6 @@ def consumer(
                     frag_inds.append(a)
 
             for r in region:
-                begin = time()
                 gene_id = iso_tbl.get(0)
                 if r1_wins_list or r2_wins_list:
                     ats_pos = (r.start if r.strand == "+" else r.end) - iso_tbl.gene.start
@@ -100,10 +98,10 @@ def consumer(
                             ids.append(iso_tbl.get(i))
 
                     if ws:
-                        res.append(f"{r.to_str()}\t{gene_id}\t{','.join(ids)}\t{','.join(ws)}\t{(time() - begin) * 1000}\t{len(reads)}")
+                        res.append(f"{r.to_str()}\t{gene_id}\t{','.join(ids)}\t{','.join(ws)}")
                         continue
 
-                res.append(f"{r.to_str()}\t{gene_id}\t.\t.\t{(time() - begin) * 1000}\t{len(reads)}")
+                res.append(f"{r.to_str()}\t{gene_id}\t.\t.")
         except Exception as err:
             log.exception(err)
         output_queue.put(res)
