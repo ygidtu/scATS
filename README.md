@@ -1,6 +1,15 @@
-# ATSMix
+# scATS
 
-## Two methods
+## Installation
 
-modeling and cage
+```bash
+git clone git@github.com:ygidtu/scATS.git
+```
 
+## TODO
+
+- [x] preprocess
+- [x] ATS model
+- [x] isoform identification
+- [ ] count
+- [ ] PSI

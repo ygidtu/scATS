@@ -1,0 +1,17 @@
+[[source]]
+url = "https://mirrors.aliyun.com/pypi/simple/"
+verify_ssl = true
+name = "pypi"
+
+[packages]
+rich = "*"
+click = "*"
+pysam = "*"
+scipy = "*"
+numpy = "*"
+
+[dev-packages]
+pipenv-setup = "*"
+
+[requires]
+python_version = ">=3.7"

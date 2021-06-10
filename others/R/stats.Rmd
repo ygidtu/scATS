@@ -1,0 +1,327 @@
+---
+title: "bigSCale"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+```{r include=FALSE}
+library(ggplot2)
+library(ggpubr)
+library(trqwe)
+library(stringr)
+library(data.table)
+```
+
+
+```{r}
+res = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/CG/NHC2_jl_all/test_R/test.rds")
+
+st_arr = res$st_arr
+en_arr = res$en_arr
+
+est_density = function(alpha_arr, beta_arr, ws, L, x_arr){
+  K = length(alpha_arr)
+  y_arr = rep(0,length(x_arr))
+  for(k in seq(K)){
+    y_arr = y_arr + ws[k]*dnorm(x_arr, alpha_arr[k], beta_arr[k])
+  }
+  y_arr = y_arr + 1/L
+  return(y_arr)
+}
+
+library(ggplot2)
+
+min_val = min(min(st_arr), min(en_arr))
+max_val = max(max(st_arr), max(en_arr))
+len_arr = st_arr-en_arr+1
+
+x_arr = seq(-max_val-100,0)
+y_arr = est_density(-res$alpha_arr, res$beta_arr, res$ws, L, x_arr)
+
+sec_scale = max(c(density(-st_arr)$y, density(-en_arr)$y)) / max(y_arr)
+
+p <- ggplot() +
+    geom_density(
+        aes(x=x, color = s), 
+        data = data.frame(x=c(-st_arr, -en_arr), s=rep(c("st", "en"), each = length(st_arr)))
+    ) +
+    geom_line(
+        aes(x=x, y=y, color = s), 
+        data = data.frame( x =  x_arr, y = y_arr, s = rep("est", length(x_arr)))
+    ) +
+    scale_color_manual(values=c("st"="#00AFBB", "en"="#E7B800", "est"="#FC4E07")) +
+    scale_y_continuous("Density", sec.axis = sec_axis(~ ./sec_scale, name = "Est density")) +
+    theme_bw() +
+    labs(
+        x="bp", color = "", 
+        subtitle = paste0( 
+            'ws=',paste(round(res$ws,digits = 2),collapse=" "), 
+            '; mu_len=',round(mean(len_arr)), 
+            '; std_len=', round(sd(len_arr))) 
+        ) +
+    theme(legend.position = "top")
+
+p
+```
+
+```{r}
+data = read.table(
+  "/mnt/raid64/ATS/Personal/zhangyiming/overall_ATS_cage_R.txt", 
+  sep =  "\t", header = T, stringsAsFactors = F
+)
+
+sites = sapply(data$ats_arr, function(x) {
+  x = strsplit(x, ",", perl = T)[[1]]
+  length(x)
+})
+
+
+res = as.data.frame(table(sites))
+
+res$p = round(res$Freq / sum(res$Freq) * 100)
+res$lab = paste0(res$sites, " (", res$p, "%)")
+
+ggpie(res, x="Freq", label="lab",  fill="sites")
+
+# ggplot(res, aes(x=sites, y=Freq)) +
+#   geom_bar(stat = "identity") +
+#   ggpubr::theme_pubr() +
+#   labs(x = "Number of ATS per UTR", y="Number of UTR")
+```
+
+
+```{r}
+dis = read.table("/mnt/raid64/ATS/Personal/zhangyiming/stats/overall_ATS_cage_R_dist", sep = "|")
+
+
+ggplot(dis, aes(x=V3)) +
+  geom_density() +
+  theme_pubr() +
+  scale_x_log10() +
+  labs(x = "Distance to closest CAGE")
+```
+
+
+
+```{r}
+fs = list.files("/mnt/raid64/ATS/Personal/zhangyiming/stats/bedtools_all/", "csv$", full.names = T)
+
+res = NULL
+for (f in fs) {
+  temp = fread(f)
+  temp$label = str_replace_all(basename(f), ".csv", "")
+  res = rbind(res, temp)
+}
+
+print(table(res$V5 > 0) / nrow(res))
+
+res = res[res$V5 > 0, ]
+```
+
+
+```{r}
+ggplot(res[abs(res$V1) < 500, ], aes(x=abs(V1), color = label)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "R1 length") +
+  scale_x_continuous(breaks = seq(0, 500, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+```{r}
+ggplot(res[abs(res$V3) < 500, ], aes(x=abs(V3), color = label)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "R2 length") +
+  scale_x_continuous(breaks = seq(0, 500, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+
+```{r}
+ggplot(res[abs(res$V6) < 1000, ], aes(x=abs(V6), color = label)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "Distacne between R1 start and R2 end") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+```{r}
+ggplot(res[abs(res$V5) < 2000, ], aes(x=abs(V5), color = label)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "Distacne between R1 end and R2 start") +
+  scale_x_continuous(breaks = seq(0, 2000, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+
+
+
+```{r}
+fs = list.files("/mnt/raid64/ATS/Personal/zhangyiming/stats/bedtools_stats/", "csv$", full.names = T)
+
+res = NULL
+for (f in fs) {
+  temp = fread(f)
+  res = rbind(res, temp)
+}
+
+res = res[rowSums(abs(res[, 1:4])) > 0, ]
+
+table(res$V3 > 0) / nrow(res)
+
+temp = res[res$V3 > 0, ]
+
+set.seed(42)
+sel = sample(1:nrow(res), 700000)
+temp = res[sel, ]
+```
+
+
+```{r}
+ggplot(temp[abs(temp$V1) < 500, ], aes(x=V1, color = V5)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "R1 length") +
+  scale_x_continuous(breaks = seq(0, 500, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+```{r}
+ggplot(temp[temp$V2 < 500, ], aes(x=V2, color = V5)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "R2 length") +
+  scale_x_continuous(breaks = seq(0, 500, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+
+```{r}
+ggplot(temp[temp$V3 < 1000, ], aes(x=V3, color = V5)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "Fragment") +
+  scale_x_continuous(breaks = seq(0, 1000, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+
+```{r}
+ggplot(temp[temp$V4 < 1000, ], aes(x=V4, color = V5)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "Distacne between R1 start and R2 end") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+
+
+```{r}
+fs = list.files("/mnt/raid64/ATS/Personal/zhangyiming/stats/cellranger_stats//", "csv$", full.names = T)
+
+res = NULL
+for (f in fs) {
+  temp = fread(f)
+  temp$label = str_replace_all(basename(f), ".csv", "")
+  res = rbind(res, temp)
+}
+
+print(table(res$V3 > 0) / nrow(res))
+
+# res = res[res$V5 > 0, ]
+```
+
+
+```{r}
+ggplot(res[abs(res$V1) < 500, ], aes(x=abs(V1), color = label)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "R1 length") +
+  scale_x_continuous(breaks = seq(0, 500, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+```{r}
+ggplot(res[abs(res$V2) < 500, ], aes(x=abs(V2), color = label)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "R2 length") +
+  scale_x_continuous(breaks = seq(0, 500, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+
+```{r}
+ggplot(res[res$V3 < 1000 & res$V3 > -1000, ], aes(x=V3, color = label)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "fragment") +
+  scale_x_continuous(breaks = seq(-1000, 1000, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+
+```{r}
+ggplot(res[abs(res$V4) < 2000, ], aes(x=abs(V4), color = label)) +
+  geom_density() +
+  theme_pubr() +
+  # scale_x_log10() +
+  labs(x = "Distacne between R1 end and R2 start") +
+  scale_x_continuous(breaks = seq(0, 2000, 100)) +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+```{r}
+data = fread("/mnt/raid64/ATS/Personal/zhangyiming/NCovM1_cov.bed")
+
+d = data$V5 - data$V3
+d = d[d > -500 & d < 500]
+plot(density(d))
+```
+
+```{R}
+data = csaw::getPESizes("/mnt/raid64/ATS/Personal/zhangyiming/bams/NCovM1.bam")
+
+plot(density(data$sizes[data$size < 1000]))
+```
+
+
+```{r}
+data = fread("/mnt/raid64/ATS/Personal/zhangyiming/bedtools/NHC1.bed")
+```
+
+```{r}
+d = data$V6 - data$V2
+temp = data[d < 200, ]
+
+td = d[d < 1000 & data$V2 != -1 & data$V2 != data$V5]
+plot(density(td))
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

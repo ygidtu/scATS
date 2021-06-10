@@ -1,23 +1,30 @@
 package main
 
 import (
+	"bufio"
+	"compress/gzip"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
+	"strings"
+	"time"
 
 	"github.com/biogo/hts/bam"
 	"github.com/biogo/hts/sam"
 	pb "github.com/cheggaaa/pb/v3"
 	"github.com/pkg/errors"
 	"github.com/voxelbrain/goptions"
+	"go.uber.org/zap"
+	"go.uber.org/zap/zapcore"
+	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 // config is command line parameters
 type config struct {
 	Input  string        `goptions:"-i, --input, description='The input bam file'"`
 	Output string        `goptions:"-o, --output, description='The output bam file'"`
-	Number int           `goptions:"-n, --number, description='extract one record per ?'"`
+	Target string        `goptions:"-s, --select, description='Selected reads'"`
 	Thread int           `goptions:"-t, --thread, description='how many thread to read and write bam file'"`
 	Debug  bool          `goptions:"-d, --debug, description='Debug level log'"`
 	Help   goptions.Help `goptions:"-h, --help, description='Show this help'"`
@@ -25,7 +32,68 @@ type config struct {
 
 // defaultConfig provide default parameters
 func defaultConfig() config {
-	return config{Number: 10, Debug: false, Thread: 10}
+	return config{Debug: false, Thread: 10}
+}
+
+var logger *zap.Logger
+var sugar *zap.SugaredLogger
+
+// NewEncoderConfig as name says
+func NewEncoderConfig() zapcore.EncoderConfig {
+	return zapcore.EncoderConfig{
+		// Keys can be anything except the empty string.
+		TimeKey:        "T",
+		LevelKey:       "L",
+		NameKey:        "N",
+		CallerKey:      "C",
+		MessageKey:     "M",
+		StacktraceKey:  "S",
+		LineEnding:     zapcore.DefaultLineEnding,
+		EncodeLevel:    zapcore.CapitalColorLevelEncoder,
+		EncodeTime:     TimeEncoder,
+		EncodeDuration: zapcore.StringDurationEncoder,
+		EncodeCaller:   zapcore.ShortCallerEncoder,
+	}
+}
+
+// TimeEncoder as name says
+func TimeEncoder(t time.Time, enc zapcore.PrimitiveArrayEncoder) {
+	enc.AppendString(t.Format("2006-01-02 15:04:05.000"))
+}
+
+func setLogger(debug bool, log string) {
+
+	level := zap.InfoLevel
+	encoder := NewEncoderConfig()
+	if debug {
+		level = zap.DebugLevel
+		encoder = zap.NewDevelopmentEncoderConfig()
+	}
+
+	core := zapcore.NewCore(
+		zapcore.NewConsoleEncoder(encoder),
+		zapcore.AddSync(os.Stderr),
+		level,
+	)
+
+	if log != "" {
+		w := zapcore.AddSync(&lumberjack.Logger{
+			Filename:   log,
+			MaxSize:    500, // megabytes
+			MaxBackups: 3,
+			MaxAge:     28, // days
+		})
+
+		core = zapcore.NewCore(
+			zapcore.NewJSONEncoder(encoder),
+			zapcore.AddSync(w),
+			level,
+		)
+	}
+
+	logger = zap.New(core, zap.AddCaller())
+	defer logger.Sync()
+	sugar = logger.Sugar()
 }
 
 // createIndex
@@ -38,6 +106,50 @@ func createIndex(conf *config) error {
 	cmd := exec.Command(path, "index", "-@", strconv.Itoa(conf.Thread), conf.Output)
 	err = cmd.Run()
 	return err
+}
+
+// load tagets
+func load(path string) (map[string]int, error) {
+	required := map[string]int{}
+
+	stat, err := os.Stat(path)
+	if err != nil {
+		return required, err
+	}
+
+	f, err := os.Open(path)
+	if err != nil {
+		return required, err
+	}
+	defer f.Close()
+
+	bar := pb.Full.Start64(stat.Size())
+
+	gr, err := gzip.NewReader(bar.NewProxyReader(f))
+	if err != nil {
+		return required, err
+	}
+	defer gr.Close()
+
+	r := bufio.NewReader(gr)
+
+	for {
+		line, err := r.ReadString('\n')
+		if err != nil {
+			break
+		}
+		line = strings.TrimSpace(line)
+
+		if line == "" {
+			continue
+		}
+
+		required[line] = 0
+	}
+
+	bar.Finish()
+
+	return required, nil
 }
 
 // process is used to read and process bam file
@@ -54,6 +166,11 @@ func process(conf *config) error {
 		}
 	}
 
+	required, err := load(conf.Target)
+	if err != nil {
+		return err
+	}
+
 	stat, err := os.Stat(conf.Input)
 	if os.IsNotExist(err) {
 		return errors.Wrap(err, "input bam not exists")
@@ -64,7 +181,7 @@ func process(conf *config) error {
 	if err != nil {
 		return errors.Wrap(err, "faild to open input bam")
 	}
-	defer ifh.Close()ƒreplac
+	defer ifh.Close()
 
 	//Create a new BAM reader with maximum
 	//concurrency:
@@ -102,20 +219,17 @@ func process(conf *config) error {
 		}
 	}()
 
-	count := 0
 	for {
-		count++
 		rec, err := bamReader.Read()
 		if err != nil {
 			break
 		}
-		if count == 10 {
+		if _, ok := required[rec.Name]; ok {
 			bc <- rec
-			count = 0
 		}
 	}
 	close(bc)
-
+	bar.Finish()
 	return nil
 }
 
