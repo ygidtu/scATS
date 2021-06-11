@@ -5,15 +5,15 @@ Created at 2021.04.25 by Zhang
 
 Functions used to count the single cell level expression and calculate PSI
 """
-import pysam
-
 from multiprocessing import Process, Queue
 from typing import Dict, List
 
-from rich.progress import track
+import pysam
 
-from src.reader import check_bam, load_ats
 from src.loci import BED
+from src.logger import log
+from src.progress import custom_progress
+from src.reader import check_bam, load_ats
 
 
 class Bam(object):
@@ -26,11 +26,11 @@ class Bam(object):
         init this class with bam path and file label
         """
         if not check_bam(path):
-            log.error(f"{bam} is not a valid bam file: {err}")
+            log.error(f"{path} is not a valid bam file")
             exit(1)
         self.path = path
 
-        self.label = os.path.basename(path) if label is None else label
+        self.label = "" if label is None else label
     
     def reads(self, region: BED, cell_tag: str = "CB", umi_tag: str = "UB"):
         u"""
@@ -62,14 +62,14 @@ def count_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue
 
         res = {}
         for r in regions:
-            row_id = f"{utr.to_str()}_{r}"
+            row_id = f"{utr.to_str()}_{r.to_str()}"
 
             if row_id not in res.keys():
                 res[row_id] = {}
 
             for b in bam_files:
-                for cb, ub in b:
-                    col_id = f"{cb}_{b.label}"
+                for cb, ub in b.reads(region = r):
+                    col_id = f"{cb}_{b.label}" if b.label else cb
 
                     if col_id not in res[row_id].keys():
                         res[row_id][col_id] = set()
@@ -89,36 +89,43 @@ def count(bams: Dict, output: str, ats: str, processes: int = 1) :
 
     ats = load_ats(ats)
 
-    # row_ids = []
-    # col_ids = set()
+    input_queue = Queue()
+    output_queue = Queue()
 
-    res = {}
-    for utr, regions in track(ats.items()):
-        for r in regions:
-            row_id = f"{utr.to_str()}_{r}"
-            # row_ids.append(row_id)
+    # generate consumers
+    consumers = []
+    for _ in range(processes):
+        p = Process(
+            target=count_consumer,
+            args=(
+                bam_files,
+                input_queue,
+                output_queue,
+            )
+        )
+        p.daemon = True
+        p.start()
+        consumers.append(p)
 
-            if row_id not in res.keys():
-                res[row_id] = {}
+    for utr, regions in ats.items():
+        input_queue.put([utr, regions])
 
-            for b in bam_files:
-                for cb, ub in b:
-                    col_id = f"{cb}_{b.label}"
 
-                    # col_ids.add(col_id)
+    progress = custom_progress()
 
-                    if col_id not in res[row_id].keys():
-                        res[row_id][col_id] = set()
-                    
-                    res[row_id][col_id].add(ub)
+    with progress:
+        with open(output, "w+") as w:
+            task = progress.add_task("Counting...", total=len(ats))
 
-    with open(output, "w+") as w:
-        for row, data in res.items():
-            for col, val in data.items():
-                if len(val) > 0:
-                    w.write(f"{row}\t{col}\t{len(val)}\n")
+            while not progress.finished:
+                res = output_queue.get(block=True, timeout=None)
 
-    return res
+                for row, data in res.items():
+                    for col, val in data.items():
+                        if len(val) > 0:
+                            w.write(f"{row}\t{col}\t{len(val)}\n")
+                            w.flush()
+                progress.update(task, advance=1)
 
 
 def psi(mtx: str, output: str):
@@ -155,7 +162,7 @@ def psi(mtx: str, output: str):
 
     with open(output, "w+") as w:
         for row, data in res.items():
-            for col, val in col.items():
+            for col, val in data.items():
                 total = summurize[col][row.split("_")[0]]
                 w.write(f"{row}\t{col}\t{val / total}\n")
 

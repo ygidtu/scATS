@@ -11,8 +11,9 @@ from typing import List
 
 import click
 from rich import print
-from rich.progress import *
+
 from src.logger import init_logger, log
+from src.progress import custom_progress
 from src.reader import check_bam, load_ats
 from ats.isoform import GTFUtils, assign_isoform
 
@@ -288,6 +289,9 @@ def isoform(
     gtf = GTFUtils(gtf)
     ats = load_ats(ats, julia=julia)
 
+    if not ats:
+        exit(0)
+
     if debug:
         res = run(
             ats=ats,
@@ -330,15 +334,7 @@ def isoform(
     for _ in range(processes):
         input_queue.put([None, None])
 
-    progress = Progress(
-        "[progress.description]{task.description}",
-        BarColumn(),
-        "[progress.percentage]{task.percentage:>3.0f}% ({task.completed}/{task.total})",
-        TextColumn("| Elapsed:"),
-        TimeElapsedColumn(),
-        TextColumn("| Remaining:"),
-        TimeRemainingColumn(),
-    )
+    progress = custom_progress()
 
     with progress:
         task = progress.add_task("Computing...", total=len(ats))

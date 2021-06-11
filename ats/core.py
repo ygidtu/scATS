@@ -139,25 +139,12 @@ class AtsModel(object):
 
         return cls(**data)
 
-    @classmethod
-    def normpdf(cls, x, mu, sigma, do_log=False):
-        u"""
-        replace scipt.stats.norm
-        It's seems have performance issues
-        """
-        sigma = np.abs(sigma)
-        u = (np.array(x)-mu)/sigma
-        y = np.multiply(
-            np.divide(1, np.multiply(np.sqrt(2 * pi), sigma)),
-            np.exp(-u * u/2)
-        )
-        return np.log(y) if do_log else y
-
-    @classmethod
-    def entropy(cls, mtx):
-        """ Computes entropy of label distribution. """
-        # return np.sum([__entropy__(x) for x in mtx])
-        return entropy(mtx)
+    @staticmethod
+    def lik_l_ab(l_arr, alpha, beta, log=False):
+        if log:
+            return stats.norm(loc=alpha, scale=beta).logpdf(l_arr)
+        else:
+            return stats.norm(loc=alpha, scale=beta).pdf(l_arr)
 
     def cal_z_k(self, para, k, log_zmat):
         # K = len(ws) - 1  # last component is uniform component
@@ -165,10 +152,7 @@ class AtsModel(object):
         alpha_arr = para.alpha_arr
         beta_arr = para.beta_arr
         if k < para.K:
-            log_zmat[:, k] = np.add(
-                np.log(ws[k]),
-                AtsModel.normpdf(self.st_arr, alpha_arr[k], beta_arr[k])
-            )
+            log_zmat[:, k] = np.log(ws[k]) + self.lik_l_ab(self.st_arr, alpha_arr[k], beta_arr[k], log=True)
         else:
             log_zmat[:, k] = np.add(np.log(ws[k]), self.unif_log_lik)
         return log_zmat

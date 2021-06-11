@@ -13,21 +13,9 @@ import re
 from typing import Dict, List
 
 import pysam
-from rich.progress import *
 
 from src.loci import BED, Reads
-
-
-def custom_progress():
-    return Progress(
-        "[progress.description]{task.description}",
-        BarColumn(),
-        "[progress.percentage]{task.percentage:>3.0f}%",
-        TextColumn("| Remaining:"),
-        TimeRemainingColumn(),
-        TextColumn("| Speed: "),
-        TransferSpeedColumn()
-    )
+from src.progress import custom_progress
 
 
 def load_ats(path: str, julia: bool = False) -> Dict:
@@ -39,7 +27,7 @@ def load_ats(path: str, julia: bool = False) -> Dict:
 
     beds = {}
     header = True
-    progress = custom_progress()
+    progress = custom_progress(io = True)
     with progress:
         task_id = progress.add_task(
             f"Reading... ", total=os.path.getsize(path))
@@ -66,8 +54,7 @@ def load_ats(path: str, julia: bool = False) -> Dict:
                     record_id=line[2] if not julia else str(curr_idx)
                 )
 
-                alpha = line[3].split(",") if not julia else line[2].split(",")
-
+                alpha = line[4].split(",") if not julia else line[2].split(",")
                 if len(alpha) > 1:
                     if utr not in beds.keys():
                         beds[utr] = []
@@ -94,7 +81,7 @@ def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED
 
     res = []
 
-    progress = custom_progress()
+    progress = custom_progress(io = True)
 
     with progress:
         task_id = progress.add_task(

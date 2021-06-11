@@ -14,10 +14,11 @@ from multiprocessing import Process, Queue, cpu_count
 from typing import List, Optional, Union
 
 import click
-from rich.progress import *
 
 from src.logger import init_logger, log
+from src.progress import custom_progress
 from src.reader import Index, check_bam, load_reads, load_utr
+
 from ats.core import AtsModel, Parameters
 
 
@@ -178,7 +179,6 @@ class ATSParams(object):
         """
         if m:
             res = m.run()
-            n_st = len(m.st_arr)
             if res:
                 return f"{self.format_res(idx, res)}"
         return None
@@ -383,16 +383,8 @@ def ats(
     for i in params:
         input_queue.put(i)
 
-    progress = Progress(
-        "[progress.description]{task.description}",
-        BarColumn(),
-        "[progress.percentage]{task.percentage:>3.0f}% ({task.completed}/{task.total})",
-        TextColumn("| Elapsed:"),
-        TimeElapsedColumn(),
-        TextColumn("| Remaining:"),
-        TimeRemainingColumn(),
-    )
-
+    progress = custom_progress()
+    
     with progress:
         task = progress.add_task("Computing...", total=len(params))
         with open(output, "w+") as w:

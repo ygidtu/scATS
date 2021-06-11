@@ -10,6 +10,7 @@ import click
 from cli.ats import ats
 from cli.isoform import isoform
 from cli.preprocess import preprocess
+from cli.postprocess import postprocess
 
 
 VERSION = "0.0.1-alpha"
@@ -39,3 +40,4 @@ def cli():
 cli.add_command(preprocess)
 cli.add_command(ats)
 cli.add_command(isoform)
+cli.add_command(postprocess)

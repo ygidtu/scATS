@@ -8,8 +8,9 @@ Functions used to extract utr from gtf file
 import gzip
 import os
 
-from rich.progress import Progress, track
+from rich.progress import track
 from src.loci import GTF
+from src.progress import custom_progress
 
 
 def process(gtf: str, output: str, span: int = 500):
@@ -26,8 +27,9 @@ def process(gtf: str, output: str, span: int = 500):
     transcripts = {}
 
     # read gtf
-    with Progress() as progress:
-        task_id = progress.add_task(f"Processing {os.path.basename(gtf)}", total=os.path.getsize(gtf))
+    progress = custom_progress(io = True)
+    with progress:
+        task_id = progress.add_task(f"Processing...", total=os.path.getsize(gtf))
 
         with gzip.open(gtf, "rt") if gtf.endswith("gz") else open(gtf, "r") as r:
             for line in r:
