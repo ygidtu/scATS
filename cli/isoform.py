@@ -15,7 +15,7 @@ from rich import print
 from src.logger import init_logger, log
 from src.progress import custom_progress
 from src.reader import check_bam, load_ats
-from ats.isoform import GTFUtils, assign_isoform
+from core.isoform import GTFUtils, assign_isoform
 
 
 def consumer(
@@ -26,7 +26,6 @@ def consumer(
     mu_f: int,
     sigma_f: int,
     min_frag_length: int,
-    max_reads
 ):
     u"""
     consumer
@@ -56,17 +55,10 @@ def consumer(
             iso_tbl.set_bams(bams)
             reads = iso_tbl.reads(utr)
 
-            if len(reads) > max_reads:
-                random.seed(42)
-                keys = list(reads.keys())
-                keys = random.sample(keys, int(max_reads))
-
-                reads = {i: reads[i] for i in keys}
-
             r1_wins_list = []
             r2_wins_list = []
             frag_inds = []
-            for r1, r2 in reads.items():
+            for r1, r2 in reads:
                 assign1 = iso_tbl.assign(r1)
                 assign2 = iso_tbl.assign(r2)
 
@@ -251,12 +243,6 @@ def runner(args):
     is_flag=True,
     help=""" Whether input file is come from julia verison. """
 )
-@click.option(
-    "--max-reads",
-    type=float,
-    default=math.inf,
-    help=""" The maximum reads used in single UTR, default use all reads. """
-)
 @click.argument("bams", nargs=-1, type=click.Path(exists=True), required=True)
 def isoform(
     ats: str,
@@ -268,7 +254,6 @@ def isoform(
     processes: int,
     debug: bool,
     julia: bool,
-    max_reads: float,
     bams: List[str],
 ):
     u"""
@@ -320,7 +305,6 @@ def isoform(
                 mu_f,
                 sigma_f,
                 min_frag_length,
-                max_reads,
             )
         )
         p.daemon = True

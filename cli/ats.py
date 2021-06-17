@@ -7,9 +7,8 @@ Contians all the parameters and command line params handler
 """
 import gzip
 import json
-import math
 import os
-import random
+
 from multiprocessing import Process, Queue, cpu_count
 from typing import List, Optional, Union
 
@@ -17,9 +16,9 @@ import click
 
 from src.logger import init_logger, log
 from src.progress import custom_progress
-from src.reader import Index, check_bam, load_reads, load_utr
+from src.reader import check_bam, load_reads, load_utr
 
-from ats.core import AtsModel, Parameters
+from core.model import AtsModel, Parameters
 
 
 class ATSParams(object):
@@ -37,7 +36,6 @@ class ATSParams(object):
         min_ws: float = 0.01,
         max_unif_ws: float = 0.1,
         max_beta: int = 50,
-        max_reads: Union[int, float] = math.inf,
         fixed_inference_flag: bool = False,
         debug=False
     ):
@@ -49,11 +47,12 @@ class ATSParams(object):
         log.info("Load UTR")
 
         self.index, self.bam = None, None
-        if len(bam) == 1 and os.path.isdir(bam[0]):
-            self.utr = Index(bam[0])
-        else:
-            self.utr = load_utr(utr, utr_length=utr_length, debug=debug)
-            self.bam = self.check_path(bam)
+
+        self.utr = load_utr(utr, utr_length=utr_length, debug=debug)
+        self.bam = self.check_path(bam)
+
+        if not self.bam:
+            raise ValueError("Please input valid bam files")
 
         self.n_max_ats = n_max_ats
         self.n_min_ats = n_min_ats
@@ -62,7 +61,6 @@ class ATSParams(object):
         self.max_unif_ws = max_unif_ws
         self.max_beta = max_beta
         self.fixed_inference_flag = fixed_inference_flag
-        self.max_reads = max_reads
         self.debug = debug
 
     @staticmethod
@@ -97,7 +95,7 @@ class ATSParams(object):
         return len(self.utr)  # if not self.debug else 5
 
     @staticmethod
-    def __format_reads_to_relative__(reads: List, utr) -> List[int]:
+    def __format_reads_to_relative__(reads, utr) -> List[int]:
         u"""
         format list of reads into start site array
         """
@@ -105,7 +103,8 @@ class ATSParams(object):
 
         utr_site = utr.start if utr.strand == "+" else utr.end
 
-        for r in reads:
+        # Only iter reads1
+        for r, _ in reads:
             if utr.start <= r.start <= r.end <= utr.end:
                 site = r.start if utr.strand == "+" else r.end
                 st_arr.append(site - utr_site if utr.strand ==
@@ -125,16 +124,8 @@ class ATSParams(object):
         """
         if idx < len(self.utr):
             # only use R1
-            if self.bam is not None:
-                reads = load_reads(self.bam, self.utr[idx])
-                utr = self.utr[idx]
-            else:
-                utr, reads = self.utr.get(idx)
-            reads = list(reads.keys())
-
-            if len(reads) > self.max_reads:
-                random.seed(42)
-                reads = random.sample(reads, int(self.max_reads))
+            reads = load_reads(self.bam, self.utr[idx])
+            utr = self.utr[idx]
 
             st_arr = self.__format_reads_to_relative__(reads, utr)
             if len(st_arr) <= 1:
@@ -289,12 +280,6 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     help=""" The maximum std for ATSs. """
 )
 @click.option(
-    "--max-reads",
-    type=float,
-    default=math.inf,
-    help=""" The maximum reads used in single UTR, default use all reads. """
-)
-@click.option(
     "--fixed-inference",
     is_flag=True,
     default=True,
@@ -326,7 +311,6 @@ def ats(
     fixed_inference: bool,
     processes: int,
     debug: bool,
-    max_reads: float,
     bams: List[str],
 ):
     u"""
@@ -349,7 +333,6 @@ def ats(
         max_unif_ws=max_unif_ws,
         max_beta=max_beta,
         fixed_inference_flag=fixed_inference,
-        max_reads=max_reads,
         debug=debug
     )
 

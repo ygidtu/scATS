@@ -10,12 +10,15 @@ import random
 from multiprocessing import Pool
 from subprocess import check_call
 from shutil import rmtree
+import pysam
 
 import click
 
 from rich.logging import RichHandler
 
 log = logging.getLogger(("rich"))
+
+__dir__ = os.path.abspath(os.path.dirname(__file__))
 
 def init_logger(level = "NOTSET"):
     FORMAT = "%(message)s"
@@ -67,17 +70,17 @@ def process(args):
                     names = set()
 
     if os.path.exists(f"{bam}.name_sel.gz") and not os.path.exists(output):
-        # with gzip.open(f"{bam}.name_sel.gz", "rt") as r:
-        #     names = r.readlines()
+        with gzip.open(f"{bam}.name_sel.gz", "rt") as r:
+            names = r.readlines()
 
-        # log.info(f"random select {len(names)} from {bam}")
+        log.info(f"random select {len(names)} from {bam}")
         # with pysam.AlignmentFile(bam) as r:
         #     with pysam.AlignmentFile(output, "wb", template = r) as w:
         #         for rec in r:
         #             if rec.query_name in names:
         #                 w.write(rec)
 
-        check_call(f"{os.path.dirname(os.path.abspath(__file__))}/go/extract/afe -i {bam} -s {bam}.name_sel.gz -o {output} -t 20", shell=True)
+        check_call(f"{os.path.dirname(__dir__)}/go/extract/afe -i {bam} -s {bam}.name_sel.gz -o {output} -t 20", shell=True)
         log.info(f"finished with {bam}")
 
 

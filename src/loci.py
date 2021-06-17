@@ -18,7 +18,7 @@ class Region(object):
     Class handle the genomic regions
     """
 
-    __slots__ = ["chromosome", "start", "end", "strand"]
+    __slots__ = ["chromosome", "start", "end", "strand", "original"]
 
     def __init__(self, chromosome: str, start: int, end: int, strand: str):
         start, end = int(start), int(end)
@@ -30,8 +30,11 @@ class Region(object):
         self.start = int(start)
         self.end = int(end)
         self.strand = strand
+        self.original = ""
 
     def __str__(self) -> str:
+        if self.original:
+            return self.original
         return "{}:{}-{}:{}".format(
             self.chromosome,
             self.start,
@@ -97,6 +100,24 @@ class Region(object):
             return False
 
         return self.start - tolerance <= other.start <= other.end <= self.end + tolerance
+
+    @classmethod
+    def create(cls, record: str):
+        u"""
+        Create Reads obj from pysam.AlignedSegment
+
+        :param record: 1:100-200:+
+        """
+        coords = record.split(":")
+        sites = [int(x) for x in coords[1].split("-")]
+        
+        return cls(
+            chromosome=coords[0],
+            start=sites[0],
+            end=sites[1],
+            strand=coords[2]
+        )
+
 
 
 class GenomicLoci(Region):

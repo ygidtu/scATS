@@ -5,6 +5,8 @@ Created at 2021.04.25 by Zhang
 
 Functions used to count the single cell level expression and calculate PSI
 """
+import os
+
 from multiprocessing import Process, Queue
 from typing import Dict, List
 
@@ -137,34 +139,44 @@ def psi(mtx: str, output: str):
     # cell -> utr -> sum
     summurize = {}
     res = {}
-    with open(mtx) as r:
-        for line in r:
-            line = line.split()
 
-            col_id = line[1]
-            utr = line[0].split("_")[0]
-            row_id = line[0]
+    progress = custom_progress(io = True)
+    with progress:
+        task_id = progress.add_task("PSI... ", total = os.path.getsize(mtx))
+        with open(mtx) as r:
+            for line in r:
+                progress.update(task_id, advance=len(str.encode(line)))
+                line = line.split()
 
-            # sum
-            if col_id not in summurize.keys():
-                summurize[col_id] = {}
-            
-            if utr not in summurize[col_id].keys():
-                summurize[col_id][utr] = 0
+                col_id = line[1]
+                utr = line[0].split("_")[0]
+                row_id = line[0]
 
-            summurize[col_id][utr] += int(line[2])
+                # sum
+                if col_id not in summurize.keys():
+                    summurize[col_id] = {}
+                
+                if utr not in summurize[col_id].keys():
+                    summurize[col_id][utr] = 0
 
-            # collect data
-            if row_id not in res.keys():
-                res[row_id] = {}
+                summurize[col_id][utr] += int(line[2])
 
-            res[row_id][col_id] = int(line[2])
+                # collect data
+                if row_id not in res.keys():
+                    res[row_id] = {}
 
-    with open(output, "w+") as w:
-        for row, data in res.items():
-            for col, val in data.items():
-                total = summurize[col][row.split("_")[0]]
-                w.write(f"{row}\t{col}\t{val / total}\n")
+                res[row_id][col_id] = int(line[2])
+
+    progress = custom_progress()
+    task_id = progress.add_task("Saving... ", total = len(res))
+
+    with progress:
+        with open(output, "w+") as w:
+            for row, data in res.items():
+                for col, val in data.items():
+                    total = summurize[col][row.split("_")[0]]
+                    w.write(f"{row}\t{col}\t{val / total}\n")
+                progress.update(task_id, advance=1)
 
 
 if __name__ == '__main__':

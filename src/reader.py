@@ -105,7 +105,7 @@ def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED
     return res
 
 
-def load_reads(bam: List[str], region: BED) -> Dict:
+def load_reads(bam: List[str], region: BED):
     u"""
     Load reads, keys -> R1; values -> R2
     Only both R1
@@ -114,6 +114,7 @@ def load_reads(bam: List[str], region: BED) -> Dict:
 
     :params bam: list of bam files
     :params region:
+    :return generator: generate r1 and r2
     """
     res = {}
     for b in bam:
@@ -152,11 +153,9 @@ def load_reads(bam: List[str], region: BED) -> Dict:
                 r1 = Reads.create(r1)
                 r2 = Reads.create(r2)
                 if r1 and r2 and region.is_cover(r1, 0) and region.is_cover(r2, 0):
-                    res[r1] = r2
+                    yield r1, r2
 
                 i += 1
-
-    return res
 
 
 def check_bam(path: str) -> bool:
@@ -166,30 +165,6 @@ def check_bam(path: str) -> bool:
     except Exception as err:
         return False
     return True
-
-
-class Index(object):
-
-    def __init__(self, path: str):
-        self.path = path
-        self.utr = self.__load_utr__()
-
-    def __len__(self):
-        return len(self.utr)
-
-    def __load_utr__(self):
-        with open(os.path.join(self.path, "index.pkl"), "rb") as r:
-            return pickle.load(r)
-
-    def get(self, idx: int):
-        if idx < len(self.utr):
-            utr = self.utr[idx]
-
-            with open(os.path.join(self.path, f"{idx}.pkl"), "rb") as r:
-                values = pickle.load(r)
-
-            return utr, values
-        return None, None
 
 
 if __name__ == '__main__':

@@ -8,10 +8,10 @@ Comand line handlers
 import click
 
 from cli.ats import ats
+from cli.coexp import coexp
 from cli.isoform import isoform
-from cli.preprocess import preprocess
 from cli.postprocess import postprocess
-
+from cli.preprocess import preprocess
 
 VERSION = "0.0.1-alpha"
 LABEL = "scATS"
@@ -41,3 +41,8 @@ cli.add_command(preprocess)
 cli.add_command(ats)
 cli.add_command(isoform)
 cli.add_command(postprocess)
+cli.add_command(coexp)
+
+
+if __name__ == "__main__":
+    pass
