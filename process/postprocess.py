@@ -16,6 +16,7 @@ from src.loci import BED
 from src.logger import log
 from src.progress import custom_progress
 from src.reader import check_bam, load_ats
+from src.expression import Expr
 
 
 class Bam(object):
@@ -137,46 +138,12 @@ def psi(mtx: str, output: str):
     """
 
     # cell -> utr -> sum
-    summurize = {}
-    res = {}
+    expr = Expr.get_psi(mtx)
+        
+    with open(output, "w+") as w:
+        for i in expr:
+            w.write("\t".join([str(x) for x in i]) + "\n")
 
-    progress = custom_progress(io = True)
-    with progress:
-        task_id = progress.add_task("PSI... ", total = os.path.getsize(mtx))
-        with open(mtx) as r:
-            for line in r:
-                progress.update(task_id, advance=len(str.encode(line)))
-                line = line.split()
-
-                col_id = line[1]
-                utr = line[0].split("_")[0]
-                row_id = line[0]
-
-                # sum
-                if col_id not in summurize.keys():
-                    summurize[col_id] = {}
-                
-                if utr not in summurize[col_id].keys():
-                    summurize[col_id][utr] = 0
-
-                summurize[col_id][utr] += int(line[2])
-
-                # collect data
-                if row_id not in res.keys():
-                    res[row_id] = {}
-
-                res[row_id][col_id] = int(line[2])
-
-    progress = custom_progress()
-    task_id = progress.add_task("Saving... ", total = len(res))
-
-    with progress:
-        with open(output, "w+") as w:
-            for row, data in res.items():
-                for col, val in data.items():
-                    total = summurize[col][row.split("_")[0]]
-                    w.write(f"{row}\t{col}\t{val / total}\n")
-                progress.update(task_id, advance=1)
 
 
 if __name__ == '__main__':
