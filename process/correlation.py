@@ -70,30 +70,13 @@ def corr(mtx: str, output: str, distance: int = 1000, pearson: bool = True):
 
     corr_func = pearsonr if pearson else spearmanr
 
-    expr = Expr()
-
-    progress = custom_progress(io = True)
-    with progress:
-        task_id = progress.add_task("Loading... ", total = os.path.getsize(mtx))
-        
-        with open(mtx) as r:
-            for line in r:
-                progress.update(task_id, advance=len(str.encode(line)))
-                line = line.split()
-
-                col_id = line[1]
-                row_id = line[0]
-
-                expr.add_row_ids(row_id)
-                expr.add_expr(col_id, value = int(line[2]))
-    expr.close()
-    # sort and get all UTRs
+    expr = Expr.create(mtx)
     expr.sort()
 
     progress = custom_progress()
 
     with progress:
-        progress.add_task("Computing... ", total=len(expr))
+        task_id = progress.add_task("Computing... ", total=len(expr))
 
         with open(output, "w+") as w:
             for i in range(len(expr)):

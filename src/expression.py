@@ -73,11 +73,13 @@ class Expr(object):
                     row_id = line[0]
 
                     expr.add_row_ids(row_id)
-                    expr.add_expr(col_id, value = int(line[2]))
+
+                    try:
+                        expr.add_expr(col_id, value = int(line[2]))
+                    except ValueError:
+                        expr.add_expr(col_id, value = float(line[2]))
 
         expr.close()
-        # sort and get all UTRs
-        expr.sort()
         return expr
 
     def __len__(self):
@@ -104,7 +106,7 @@ class Expr(object):
 
             self.__last_utr__ = utr
 
-    def add_expr(self, col_id: str, value: int):
+    def add_expr(self, col_id: str, value):
         if self.__row_id_idx__ >= len(self.expr):
             self.expr.append({})
         self.expr[self.__row_id_idx__ - 1][col_id] = value
@@ -145,6 +147,9 @@ class Expr(object):
         get list of expression values
         """
         return [self.expr[index].get(x, 0) for x in self.barcodes]
+
+    def get_expr_str(self, index: int):
+        return [str(self.expr[index].get(x, 0)) for x in self.barcodes]
 
     @classmethod
     def get_psi(cls, mtx: str):

@@ -1,0 +1,33 @@
+---
+title: "ICAS"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/raid64/ATS/Personal/zhangyiming/model/")
+```
+
+
+```{r load}
+suppressMessages(library(ICAS))
+suppressMessages(library(Seurat))
+suppressMessages(library(reshape2))
+suppressMessages(library(dplyr))
+suppressMessages(library(trqwe))
+suppressMessages(library(data.table))
+```
+
+
+## Generate Rds
+```{r generate_file}
+count = fread("filter/mouse.count.gz", sep = ",")
+
+count = as.data.frame(count)
+# count = dcast(count, V1~V2, value.var = "V3", fill = 0, fun.aggregate = mean)
+
+rownames(count) <- count$V1
+count[1:5, 1:5]
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
