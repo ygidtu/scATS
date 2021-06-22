@@ -36,52 +36,6 @@ func SetLogger() zerolog.Logger {
 	return zerolog.New(output).With().Timestamp().Logger()
 }
 
-// collectBarcode used to collect all barcodes from file
-func collectBarcode(path string) (map[string]int, error) {
-	barcodes := make(map[string]int)
-
-	stats, err := os.Stat(path)
-	if os.IsNotExist(err) {
-		return barcodes, errors.New(path + " not exists")
-	}
-
-	f, err := os.Open(path)
-	if err != nil {
-		return barcodes, errors.Wrapf(err, "failed to open %s", path)
-	}
-	defer f.Close()
-
-	bar := progressbar.DefaultBytes(
-		stats.Size(),
-		"barcoding",
-	)
-
-	reader := bufio.NewReader(f)
-
-	for {
-		line, err := reader.ReadString('\n')
-		if err != nil {
-			if err == io.EOF {
-				break
-			} else {
-				return barcodes, errors.Wrapf(err, "failed to read from %s", path)
-			}
-		}
-
-		bar.Add(len([]byte(line)))
-
-		fields := strings.Split(strings.TrimSpace(line), "\t")
-
-		if _, ok := barcodes[fields[1]]; !ok {
-			barcodes[fields[1]] = len(barcodes)
-		}
-	}
-
-	bar.Finish()
-
-	return barcodes, nil
-}
-
 // zeros generate slice full of "0" by specific size
 func zeros(size int) []string {
 	res := make([]string, size)
@@ -90,6 +44,33 @@ func zeros(size int) []string {
 		res[i] = "0"
 	}
 	return res
+}
+
+// format is used to format string
+func format(inChan chan [][]string, outChan chan string, barcodes map[string]int, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	for {
+		rows, ok := <-inChan
+
+		if !ok {
+			break
+		}
+
+		res := zeros(len(barcodes))
+		rowId := ""
+		for _, cols := range rows {
+			if rowId == "" {
+				rowId = cols[0]
+			}
+
+			if idx, ok := barcodes[cols[1]]; ok {
+				res[idx] = cols[2]
+			}
+		}
+
+		outChan <- fmt.Sprintf("%s,%s\n", rowId, strings.Join(res, ","))
+	}
 }
 
 // write is save format string to file
@@ -129,43 +110,8 @@ func write(output string, barcodes map[string]int, outChan chan string) {
 	}
 }
 
-// format is used to format string
-func format(inChan chan [][]string, outChan chan string, barcodes map[string]int, wg *sync.WaitGroup) {
-	defer wg.Done()
-
-	for {
-		rows, ok := <-inChan
-
-		if !ok {
-			break
-		}
-
-		res := zeros(len(barcodes))
-		rowId := ""
-		for _, cols := range rows {
-			if rowId == "" {
-				rowId = cols[0]
-			}
-
-			res[barcodes[cols[1]]] = cols[2]
-		}
-
-		outChan <- fmt.Sprintf("%s,%s\n", rowId, strings.Join(res, ","))
-	}
-}
-
-func processCounts(input, output string, thread, min int, barcodes map[string]int) map[string]int {
-	inChan := make(chan [][]string)
-	outChan := make(chan string)
-
-	go write(output, barcodes, outChan)
-
-	var wg sync.WaitGroup
-	for i := 0; i < thread; i++ {
-		wg.Add(1)
-		go format(inChan, outChan, barcodes, &wg)
-	}
-
+// openFileToRead as name says
+func openFileToRead(input string, barText string) (*progressbar.ProgressBar, *bufio.Reader, *os.File) {
 	// Try to format file
 	stats, err := os.Stat(input)
 	if os.IsNotExist(err) {
@@ -180,15 +126,110 @@ func processCounts(input, output string, thread, min int, barcodes map[string]in
 
 	bar := progressbar.DefaultBytes(
 		stats.Size(),
-		"formatting count",
+		barText,
 	)
 
+	// wrap a gzip reader, if input file in gzipped
 	reader := bufio.NewReader(f)
+	if strings.HasSuffix(input, ".gz") {
+		gr, err := gzip.NewReader(f)
 
-	lastRowId := ""
-	vals := make([][]string, 0)
-	sum := 0
-	validRowId := make(map[string]int)
+		if err != nil {
+			log.Err(err).Msgf("failed to open %s", input)
+		}
+
+		reader = bufio.NewReader(gr)
+	}
+	return bar, reader, f
+}
+
+// updateBar as name says
+func updateBar(bar *progressbar.ProgressBar, already int64, f *os.File) int64 {
+	curOffset, _ := f.Seek(0, os.SEEK_CUR)
+	bar.Add(int(curOffset - already))
+	return curOffset
+}
+
+// collectBarcode used to collect all barcodes from file
+func collectBarcode(path string) (map[string]int, error) {
+	barcodes := make(map[string]int)
+
+	bar, reader, f := openFileToRead(path, "Barcoding")
+
+	haveRead := int64(0) // use this to log the reading process
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			} else {
+				return barcodes, errors.Wrapf(err, "failed to read from %s", path)
+			}
+		}
+
+		haveRead = updateBar(bar, haveRead, f)
+
+		fields := strings.Split(strings.TrimSpace(line), "\t")
+
+		if _, ok := barcodes[fields[1]]; !ok {
+			barcodes[fields[1]] = len(barcodes)
+		}
+	}
+
+	bar.Finish()
+
+	return barcodes, nil
+}
+
+// loadReference as name says
+func loadReference(path string) (map[string]int, error) {
+	barcodes := make(map[string]int)
+
+	bar, reader, f := openFileToRead(path, "Loading ref")
+
+	haveRead := int64(0) // use this to log the reading process
+	for {
+		line, err := reader.ReadString('\n')
+		if err != nil {
+			if err == io.EOF {
+				break
+			} else {
+				return barcodes, errors.Wrapf(err, "failed to read from %s", path)
+			}
+		}
+
+		haveRead = updateBar(bar, haveRead, f)
+
+		barcodes[strings.TrimSpace(line)] = len(barcodes)
+	}
+
+	bar.Finish()
+
+	return barcodes, nil
+}
+
+// processCounts as name says
+func processCounts(
+	input, output string,
+	thread, min int,
+	barcodes map[string]int,
+) map[string]int {
+	inChan := make(chan [][]string)
+	outChan := make(chan string)
+
+	go write(output, barcodes, outChan)
+
+	var wg sync.WaitGroup
+	for i := 0; i < thread; i++ {
+		wg.Add(1)
+		go format(inChan, outChan, barcodes, &wg)
+	}
+
+	bar, reader, f := openFileToRead(input, "Formatting count")
+	lastRowId, sum := "", 0
+	vals, validRowId := make([][]string, 0), make(map[string]int)
+
+	haveRead := int64(0) // use this to log the reading process
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -199,16 +240,9 @@ func processCounts(input, output string, thread, min int, barcodes map[string]in
 			}
 		}
 
-		bar.Add(len([]byte(line)))
+		haveRead = updateBar(bar, haveRead, f)
 
 		fields := strings.Split(strings.TrimSpace(line), "\t")
-
-		val, err := strconv.Atoi(fields[2])
-
-		if err != nil {
-			log.Err(err).Msgf("failed to convert %v", fields)
-		}
-		sum += val
 
 		if lastRowId != "" && lastRowId != fields[0] {
 			if sum > min {
@@ -220,6 +254,11 @@ func processCounts(input, output string, thread, min int, barcodes map[string]in
 			vals = [][]string{}
 			sum = 0
 		}
+		val, err := strconv.Atoi(fields[2])
+		if err != nil {
+			log.Err(err).Msgf("failed to convert %v", fields)
+		}
+		sum += val
 		lastRowId = fields[0]
 		vals = append(vals, fields)
 	}
@@ -237,7 +276,11 @@ func processCounts(input, output string, thread, min int, barcodes map[string]in
 	return validRowId
 }
 
-func processPSI(input, output string, thread int, barcodes, valid map[string]int) {
+func processPSI(
+	input, output string,
+	thread int,
+	barcodes, valid map[string]int,
+) {
 	inChan := make(chan [][]string)
 	outChan := make(chan string)
 
@@ -249,28 +292,12 @@ func processPSI(input, output string, thread int, barcodes, valid map[string]int
 		go format(inChan, outChan, barcodes, &wg)
 	}
 
-	// Try to format file
-	stats, err := os.Stat(input)
-	if os.IsNotExist(err) {
-		log.Err(err).Msgf("%s not exists", input)
-	}
-
-	f, err := os.Open(input)
-	if err != nil {
-		log.Err(err).Msgf("failed to open %s", input)
-	}
-	defer f.Close()
-
-	bar := progressbar.DefaultBytes(
-		stats.Size(),
-		"formatting psi",
-	)
-
-	reader := bufio.NewReader(f)
+	bar, reader, f := openFileToRead(input, "Formatting psi")
 
 	lastRowId := ""
 	vals := make([][]string, 0)
 
+	haveRead := int64(0) // use this to log the reading process
 	for {
 		line, err := reader.ReadString('\n')
 		if err != nil {
@@ -281,7 +308,7 @@ func processPSI(input, output string, thread int, barcodes, valid map[string]int
 			}
 		}
 
-		bar.Add(len([]byte(line)))
+		haveRead = updateBar(bar, haveRead, f)
 
 		fields := strings.Split(strings.TrimSpace(line), "\t")
 
@@ -309,12 +336,13 @@ func processPSI(input, output string, thread int, barcodes, valid map[string]int
 
 func main() {
 	options := struct {
-		Input  string        `goptions:"-i, --input, description='The path to count or psi mtx'"`
-		Psi    string        `goptions:"-p, --psi, description='The path to psi mtx'"`
-		Output string        `goptions:"-o, --output, description='The path to output file'"`
-		Thread int           `goptions:"-t, --thread, description='How many threads to use'"`
-		Min    int           `goptions:"-m, --min, description='The minimum counts of ATS to output'"`
-		Help   goptions.Help `goptions:"-h, --help, description='Show this help'"`
+		Input      string        `goptions:"-i, --input, description='The path to count or psi mtx'"`
+		Psi        string        `goptions:"-p, --psi, description='The path to psi mtx'"`
+		Output     string        `goptions:"-o, --output, description='The path to output file'"`
+		Thread     int           `goptions:"-t, --thread, description='How many threads to use'"`
+		Min        int           `goptions:"-m, --min, description='The minimum counts of ATS to output'"`
+		Referernce string        `goptions:"-r, --reference, description='List of cell barcodes to kept'"`
+		Help       goptions.Help `goptions:"-h, --help, description='Show this help'"`
 	}{
 		Thread: 4,
 	}
@@ -327,9 +355,16 @@ func main() {
 
 	SetLogger()
 
-	barcodes, err := collectBarcode(options.Input)
+	barcodes, err := loadReference(options.Referernce)
 	if err != nil {
 		log.Error().Err(err).Msg("")
+	}
+
+	if len(barcodes) == 0 {
+		barcodes, err = collectBarcode(options.Input)
+		if err != nil {
+			log.Error().Err(err).Msg("")
+		}
 	}
 
 	valid := processCounts(
