@@ -6,6 +6,7 @@ Created by Zhang at 2021.06.16
 Contains class related to expression matrix
 """
 import os
+import gzip
 
 from src.loci import Region
 from src.progress import custom_progress
@@ -56,29 +57,51 @@ class Expr(object):
         self.__last_utr__ = None
 
     @classmethod
-    def create(cls, mtx: str):
+    def create(cls, mtx: str, barcode: str=None):
         u"""
+        :params mtx: path to count matrix
+        :param barcode: path to list of barcode
         """
+        barcodes = set()
+        if barcode:
+            with open(barcode) as r:
+                for line in r:
+                    barcodes.add(line.strip())
+
         expr = cls()
         progress = custom_progress(io = True)
         with progress:
             task_id = progress.add_task("Loading... ", total = os.path.getsize(mtx))
+
+            if mtx.endswith(".gz"):
+                f = open(mtx, "rb")
+                r = gzip.GzipFile(fileobj=f)
+            else:
+                f = open(mtx)
+                r = f
             
-            with open(mtx) as r:
-                for line in r:
-                    progress.update(task_id, advance=len(str.encode(line)))
-                    line = line.split()
+            for line in r:
+                progress.update(task_id, completed=f.tell())
 
-                    col_id = line[1]
-                    row_id = line[0]
+                if isinstance(line, bytes):
+                    line = line.decode()
 
-                    expr.add_row_ids(row_id)
+                line = line.split()
 
-                    try:
-                        expr.add_expr(col_id, value = int(line[2]))
-                    except ValueError:
-                        expr.add_expr(col_id, value = float(line[2]))
+                col_id = line[1]
+                row_id = line[0]
 
+                if len(barcodes) > 0 and col_id not in barcodes:
+                    continue
+
+                expr.add_row_ids(row_id)
+
+                try:
+                    expr.add_expr(col_id, value = int(line[2]))
+                except ValueError:
+                    expr.add_expr(col_id, value = float(line[2]))
+
+            r.close()
         expr.close()
         return expr
 

@@ -119,7 +119,6 @@ class Region(object):
         )
 
 
-
 class GenomicLoci(Region):
 
     def __init__(
@@ -155,7 +154,7 @@ class GTF(Region):
 
         self.ids = {}
         for i in self.__id_label__:
-            self.ids[i] = [self.attrs[i]] if i in self.attrs.keys() else []
+            self.ids[i] = set([self.attrs[i]]) if i in self.attrs.keys() else set()
 
     def __hash__(self):
         return hash((self.chromosome, self.start, self.end, self.strand, self.source))
@@ -172,8 +171,8 @@ class GTF(Region):
             )
 
             for i in self.__id_label__:
-                self.ids[i] += other.ids[i]
-                self.ids[i] = list(set(self.ids[i]))
+                for j in other.ids[i]:
+                    gtf.ids[i].add(j)
             return gtf
 
     @classmethod

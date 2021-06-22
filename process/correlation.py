@@ -58,7 +58,7 @@ def __correction_between_ats__(
     return res
 
 
-def corr(mtx: str, output: str, distance: int = 1000, pearson: bool = True):
+def corr(mtx: str, output: str, distance: int = 1000, pearson: bool = True, barcode: str = None):
     u"""
     calculate correction of ATS count
 
@@ -66,11 +66,12 @@ def corr(mtx: str, output: str, distance: int = 1000, pearson: bool = True):
     :params output: path to output file
     :params distance: the maxmimum distance between two UTR
     :params pearson: whether to calculate pearson or spearman correction
+    :params barcode: path to list of barcodes to use
     """
 
     corr_func = pearsonr if pearson else spearmanr
 
-    expr = Expr.create(mtx)
+    expr = Expr.create(mtx, barcode)
     expr.sort()
 
     progress = custom_progress()

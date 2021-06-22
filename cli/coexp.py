@@ -31,18 +31,23 @@ from process.correlation import corr
     help=""" The maxmimum distance between two UTRs. """
 )
 @click.option(
+    "-b", "--barcode",
+    type=click.Path(),
+    help=""" The list of barcodes to use. """
+)
+@click.option(
     "--spearman",
     is_flag = True,
     help=""" Use spearman correlation instead of pearson. """
 )
-
-def coexp(input: str, output: str, distance: int, spearman: bool):
+def coexp(input: str, output: str, distance: int, spearman: bool, barcode: str):
     u"""
     Co-expression
 
     Note: The input count file must be sorted by first column.
     """
-    corr(input, output, distance=distance, pearson = not spearman)
+    corr(input, output, distance=distance, pearson=not spearman, barcode=barcode)
+
 
 if __name__ == '__main__':
     pass

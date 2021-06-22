@@ -5,7 +5,7 @@ Created at 2021.04.25 by Zhang
 
 Functions used to count the single cell level expression and calculate PSI
 """
-import os
+import gzip
 
 from multiprocessing import Process, Queue
 from typing import Dict, List
@@ -113,22 +113,24 @@ def count(bams: Dict, output: str, ats: str, processes: int = 1) :
     for utr, regions in ats.items():
         input_queue.put([utr, regions])
 
-
     progress = custom_progress()
 
     with progress:
-        with open(output, "w+") as w:
-            task = progress.add_task("Counting...", total=len(ats))
+        w = gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+")
+        
+        task = progress.add_task("Counting...", total=len(ats))
 
-            while not progress.finished:
-                res = output_queue.get(block=True, timeout=None)
+        while not progress.finished:
+            res = output_queue.get()
 
-                for row, data in res.items():
-                    for col, val in data.items():
-                        if len(val) > 0:
-                            w.write(f"{row}\t{col}\t{len(val)}\n")
-                            w.flush()
-                progress.update(task, advance=1)
+            for row, data in res.items():
+                for col, val in data.items():
+                    if len(val) > 0:
+                        w.write(f"{row}\t{col}\t{len(val)}\n")
+                        w.flush()
+            progress.update(task, advance=1)
+
+        w.close()
 
 
 def psi(mtx: str, output: str):
@@ -140,9 +142,11 @@ def psi(mtx: str, output: str):
     # cell -> utr -> sum
     expr = Expr.get_psi(mtx)
         
-    with open(output, "w+") as w:
-        for i in expr:
-            w.write("\t".join([str(x) for x in i]) + "\n")
+    w = gzip.open(output, "wt+") if output.endswith(".gz") else open(output, "w+")
+    for i in expr:
+        w.write("\t".join([str(x) for x in i]) + "\n")
+    
+    w.close()
 
 
 

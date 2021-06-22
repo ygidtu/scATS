@@ -13,7 +13,7 @@ from cli.isoform import isoform
 from cli.postprocess import postprocess
 from cli.preprocess import preprocess
 
-VERSION = "0.0.1-alpha"
+VERSION = "0.0.1-beta"
 LABEL = "scATS"
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 

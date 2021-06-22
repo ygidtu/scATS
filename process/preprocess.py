@@ -65,7 +65,7 @@ def process(gtf: str, output: str, span: int = 500):
             source = exon.source
         )
         first_exons.append(exon)
-    first_exons = sorted(first_exons)
+    first_exons = sorted(first_exons, key=lambda x: (x.chromosome, x.start, x.end))
 
     # merging
     with gzip.open(output, "wt+") if output.endswith("gz") else open(output, "w+") as w:

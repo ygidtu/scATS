@@ -39,7 +39,13 @@ from process.postprocess import count, psi
     default=1,
     help=""" How many cpu to use. """
 )
-def postprocess(ats: str, output: str, bam: str, delimiter: str, processes: int):
+@click.option(
+    "-c", "--compress",
+    is_flag=True,
+    type=click.BOOL,
+    help=""" Wheter to save in gzip format. """
+)
+def postprocess(ats: str, output: str, bam: str, delimiter: str, processes: int,compress: bool):
     u"""
     Postprocess: count ats and calculate psi
     \f
@@ -52,8 +58,11 @@ def postprocess(ats: str, output: str, bam: str, delimiter: str, processes: int)
             if line:
                 bams[line[0]] = None if len(line) < 2 else line[1]
 
-    count(bams, ats = ats, output = f"{output}.count", processes = processes)
-    psi(f"{output}.count", f"{output}.psi")
+    c = f"{output}.count.gz" if compress else f"{output}.count"
+    p = f"{output}.psi.gz" if compress else f"{output}.psi"
+
+    count(bams, ats = ats, output = c, processes = processes)
+    psi(c, p)
 
 
 if __name__ == '__main__':

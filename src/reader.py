@@ -18,10 +18,11 @@ from src.loci import BED, Reads
 from src.progress import custom_progress
 
 
-def load_ats(path: str, julia: bool = False) -> Dict:
+def load_ats(path: str, min_ats: int = 1) -> Dict:
     u"""
     load ats modeling output data
-    :param path: the path to ats modeling output ifle
+    :param path: the path to ats modeling output file
+    :param min_ats: the minimum number of ATS locate in single UTR
     :return dict: keys -> utr region; values -> list of splice region
     """
 
@@ -50,22 +51,21 @@ def load_ats(path: str, julia: bool = False) -> Dict:
 
                 utr = BED(
                     chrom, start_pos, end_pos, strand,
-                    name=line[2] if not julia else line[0],
-                    record_id=line[2] if not julia else str(curr_idx)
+                    name="",
+                    record_id=""
                 )
 
-                alpha = line[4].split(",") if not julia else line[2].split(",")
-                if len(alpha) > 1:
+                alpha = line[3].split(",")
+                if len(alpha) > min_ats:
                     if utr not in beds.keys():
-                        beds[utr] = []
+                        beds[utr] = set()
                     try:
                         for x in alpha:
                             if x != "":
                                 x = int(float(x))
-                                s = utr.start + x if strand == "+" else utr.end - x
 
-                                beds[utr].append(
-                                    BED(chrom, s - 1, s, strand, line[0], str(len(beds) + 1)))
+                                beds[utr].add(
+                                    BED(chrom, x - 1, x, strand, line[0], str(len(beds) + 1)))
                     except Exception as e:
                         print(e)
                         pass
