@@ -74,19 +74,15 @@ func format(inChan chan [][]string, outChan chan string, barcodes map[string]int
 }
 
 // write is save format string to file
-func write(output string, barcodes map[string]int, outChan chan string) {
+func write(output string, barcodes map[string]int, outChan chan string, wg *sync.WaitGroup) {
 	f, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		log.Err(err).Msgf("failed to open %s", output)
 	}
-	defer f.Close()
 
 	gw := gzip.NewWriter(f)
-	defer gw.Flush()
-	defer gw.Close()
 
 	w := bufio.NewWriter(gw)
-	defer w.Flush()
 
 	// write header
 	colnames := make([]string, len(barcodes))
@@ -108,6 +104,13 @@ func write(output string, barcodes map[string]int, outChan chan string) {
 
 		w.WriteString(line)
 	}
+
+	w.Flush()
+	gw.Flush()
+	gw.Close()
+
+	f.Close()
+	wg.Done()
 }
 
 // openFileToRead as name says
@@ -122,7 +125,6 @@ func openFileToRead(input string, barText string) (*progressbar.ProgressBar, *bu
 	if err != nil {
 		log.Err(err).Msgf("failed to open %s", input)
 	}
-	defer f.Close()
 
 	bar := progressbar.DefaultBytes(
 		stats.Size(),
@@ -186,6 +188,7 @@ func loadReference(path string) (map[string]int, error) {
 	barcodes := make(map[string]int)
 
 	bar, reader, f := openFileToRead(path, "Loading ref")
+	defer f.Close()
 
 	haveRead := int64(0) // use this to log the reading process
 	for {
@@ -217,15 +220,18 @@ func processCounts(
 	inChan := make(chan [][]string)
 	outChan := make(chan string)
 
-	go write(output, barcodes, outChan)
-
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go write(output, barcodes, outChan, &wg)
+
+	var wg1 sync.WaitGroup
 	for i := 0; i < thread; i++ {
-		wg.Add(1)
-		go format(inChan, outChan, barcodes, &wg)
+		wg1.Add(1)
+		go format(inChan, outChan, barcodes, &wg1)
 	}
 
 	bar, reader, f := openFileToRead(input, "Formatting count")
+	defer f.Close()
 	lastRowId, sum := "", 0
 	vals, validRowId := make([][]string, 0), make(map[string]int)
 
@@ -270,8 +276,9 @@ func processCounts(
 	bar.Finish()
 
 	close(inChan)
-	wg.Wait()
+	wg1.Wait()
 	close(outChan)
+	wg.Wait()
 
 	return validRowId
 }
@@ -284,15 +291,18 @@ func processPSI(
 	inChan := make(chan [][]string)
 	outChan := make(chan string)
 
-	go write(output, barcodes, outChan)
-
 	var wg sync.WaitGroup
+	wg.Add(1)
+	go write(output, barcodes, outChan, &wg)
+
+	var wg1 sync.WaitGroup
 	for i := 0; i < thread; i++ {
-		wg.Add(1)
-		go format(inChan, outChan, barcodes, &wg)
+		wg1.Add(1)
+		go format(inChan, outChan, barcodes, &wg1)
 	}
 
 	bar, reader, f := openFileToRead(input, "Formatting psi")
+	defer f.Close()
 
 	lastRowId := ""
 	vals := make([][]string, 0)
@@ -330,8 +340,9 @@ func processPSI(
 	bar.Finish()
 
 	close(inChan)
-	wg.Wait()
+	wg1.Wait()
 	close(outChan)
+	wg.Wait()
 }
 
 func main() {
