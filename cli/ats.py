@@ -16,7 +16,7 @@ import click
 
 from src.logger import init_logger, log
 from src.progress import custom_progress
-from src.reader import check_bam, load_reads, load_utr
+from src.reader import check_bam, load_reads, load_utr, load_barcodes
 
 from core.model import AtsModel, Parameters
 
@@ -50,6 +50,8 @@ class ATSParams(object):
 
         self.utr = load_utr(utr, utr_length=utr_length, debug=debug)
         self.bam = self.check_path(bam)
+
+        self.barcodes = {b: load_barcodes(b.replace(".bam", ".barcode")) for b in self.bam}
 
         if not self.bam:
             raise ValueError("Please input valid bam files")
@@ -124,10 +126,11 @@ class ATSParams(object):
         """
         if idx < len(self.utr):
             # only use R1
-            reads = load_reads(self.bam, self.utr[idx])
+            reads = load_reads(self.bam, self.utr[idx], barcode = self.barcodes)
             utr = self.utr[idx]
 
             st_arr = self.__format_reads_to_relative__(reads, utr)
+
             if len(st_arr) <= 1:
                 return None
 

@@ -207,6 +207,8 @@ class Coordinate(object):
         self.__gene_pos__ = {i: idx for idx, i in enumerate(
             range(self.gene.start, self.gene.end))}
 
+        self.barcodes = {}
+
     def set_bams(self, bams: List[str]):
         u"""
         check input bam files
@@ -274,7 +276,7 @@ class Coordinate(object):
         u"""
         load reads and convert and assign isoforms
         """
-        return load_reads(self.bams, region)
+        return load_reads(self.bams, region, self.barcodes)
 
     def reads_to_relative(self, reads: Reads, return_winlist: bool = False):
         u"""

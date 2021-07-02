@@ -52,7 +52,7 @@ def process(gtf: str, output: str, span: int = 500):
         exons = sorted(exons)
         exon = exons[0]
         site = exon.start
-        if exons[0].strand == "-":
+        if exons[0].strand != "+":
             exon = exons[-1]
             site = exon.end
         

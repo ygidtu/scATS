@@ -4,8 +4,6 @@ u"""
 Created at 2021.05.06 by Zhang
 """
 import gzip
-import math
-import random
 from multiprocessing import Process, Queue, cpu_count
 from typing import List
 
@@ -14,7 +12,7 @@ from rich import print
 
 from src.logger import init_logger, log
 from src.progress import custom_progress
-from src.reader import check_bam, load_ats
+from src.reader import check_bam, load_ats, load_barcodes
 from core.isoform import GTFUtils, assign_isoform
 
 
@@ -26,6 +24,7 @@ def consumer(
     mu_f: int,
     sigma_f: int,
     min_frag_length: int,
+    barcodes: dict
 ):
     u"""
     consumer
@@ -45,6 +44,8 @@ def consumer(
             if not iso_tbl:
                 output_queue.put(res)
                 continue
+
+            iso_tbl.barcodes = barcodes
 
             iso_wins_list = iso_tbl.winList
 
@@ -238,11 +239,6 @@ def runner(args):
     default=1,
     help=""" How many cpu to use. """
 )
-@click.option(
-    "-j", "--julia",
-    is_flag=True,
-    help=""" Whether input file is come from julia verison. """
-)
 @click.argument("bams", nargs=-1, type=click.Path(exists=True), required=True)
 def isoform(
     ats: str,
@@ -253,7 +249,6 @@ def isoform(
     min_frag_length: int,
     processes: int,
     debug: bool,
-    julia: bool,
     bams: List[str],
 ):
     u"""
@@ -272,7 +267,9 @@ def isoform(
             exit(1)
 
     gtf = GTFUtils(gtf)
-    ats = load_ats(ats, julia=julia)
+    ats = load_ats(ats)
+
+    barcodes = {b: load_barcodes(b.replace(".bam", ".barcode")) for b in bams}
 
     if not ats:
         exit(0)
@@ -305,6 +302,7 @@ def isoform(
                 mu_f,
                 sigma_f,
                 min_frag_length,
+                barcodes,
             )
         )
         p.daemon = True

@@ -165,3 +165,6 @@ others/bin/*
 *.tar.bz2
 testfile/
 *.csv
+
+node_modules/
+dist/

@@ -105,7 +105,62 @@ def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED
     return res
 
 
-def load_reads(bam: List[str], region: BED):
+def __get_strand__(read: pysam.AlignedSegment) -> str:
+    u"""
+    determine the reads strand
+
+    :params read: 
+    """
+
+    if read.is_paired:
+        if read.is_read1 and read.is_reverse:
+            return "-"
+        elif read.is_read2 and not read.is_reverse:
+            return "-"
+        return "+"
+ 
+    return "-" if read.is_reverse else "+"
+   
+
+def load_barcodes(path: str) -> dict:
+    u"""
+    load required barcodes
+
+    :params path
+    """
+    res = {}
+
+    if not os.path.exists(path):
+        return res
+
+    with open(path) as r:
+        for line in r:
+            line = line.strip()
+
+            key = line[:min(3, len(line))]
+
+            temp = res.get(key, set())
+            temp.add(line)
+            res[key] = temp
+
+    return res
+
+
+def __is_barcode_exists__(barcodes: dict, rec: pysam.AlignedSegment) -> bool:
+    u"""
+    check whether this read contains required barcode
+    :params barcodes: a collection of required barcodes
+    :params rec: 
+    """
+    if not rec.has_tag("CB"):
+        return False
+    
+    cb = rec.get_tag("CB")
+
+    return cb[:min(3, len(cb))] in barcodes and cb in barcodes[cb[:min(3, len(cb))]]
+
+
+def load_reads(bam: List[str], region: BED, barcode):
     u"""
     Load reads, keys -> R1; values -> R2
     Only both R1
@@ -116,8 +171,7 @@ def load_reads(bam: List[str], region: BED):
     :params region:
     :return generator: generate r1 and r2
     """
-    res = {}
-    for b in bam:
+    for b in bam: 
         r1s, r2s = [], []
 
         r = pysam.AlignmentFile(b) if isinstance(b, str) else b
@@ -128,6 +182,14 @@ def load_reads(bam: List[str], region: BED):
         for rec in r.fetch(region.chromosome, region.start, region.end, until_eof=True):
             if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
                 continue
+
+            if __get_strand__(rec) != region.strand:
+                continue
+            
+            # only use the required barcodes for analysis
+            if barcode[b]:
+                if not __is_barcode_exists__(barcode[b], rec):
+                    continue
 
             if rec.is_read1:
                 r1s.append(rec)
