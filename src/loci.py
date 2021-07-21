@@ -372,7 +372,7 @@ class Reads(Region):
         self.kwargs = kwargs
 
     @classmethod
-    def create(cls, record: pysam.AlignedSegment, skip_qc: bool = False):
+    def create(cls, record: pysam.AlignedSegment, skip_qc: bool = False, single_end: bool = False):
         u"""
         Create Reads obj from pysam.AlignedSegment
 
@@ -381,7 +381,10 @@ class Reads(Region):
         :return if qc is enabled and the records failed qc, then return None
         """
         if not skip_qc:
-            if record.is_unmapped or record.is_qcfail or not record.is_proper_pair:
+            if record.is_unmapped or record.is_qcfail:
+                return None
+
+            if not single_end and not record.is_proper_pair:
                 return None
 
             try:

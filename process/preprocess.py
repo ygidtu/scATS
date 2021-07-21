@@ -47,7 +47,7 @@ def process(gtf: str, output: str, span: int = 500):
                     transcripts[rec.transcript_id].append(rec)
 
     # get first exons
-    first_exons = []
+    first_exons = {"+": [], "-": []}
     for exons in track(transcripts.values(), description=f"Collecting first exons"):
         exons = sorted(exons)
         exon = exons[0]
@@ -64,19 +64,20 @@ def process(gtf: str, output: str, span: int = 500):
             attrs=exon.attrs,
             source = exon.source
         )
-        first_exons.append(exon)
-    first_exons = sorted(first_exons, key=lambda x: (x.chromosome, x.start, x.end))
+        first_exons[exon.strand].append(exon)
 
     # merging
     with gzip.open(output, "wt+") if output.endswith("gz") else open(output, "w+") as w:
-        curr_exon = first_exons[0]
-        for i in track(range(1, len(first_exons)), description=f"Writing {os.path.basename(output)}"):
-            if curr_exon & first_exons[i]:
-                curr_exon = curr_exon + first_exons[i]
-            else:
-                w.write(f"{curr_exon.bed}\n") 
-                curr_exon = first_exons[i]
-        w.write(f"{curr_exon.bed}\n")
+        for strand, values in first_exons.items():
+            values = sorted(values, key=lambda x: [x.chromosome, x.start, x.end])
+            curr_exon = values[0]
+            for i in track(range(1, len(values)), description=f"Writing {strand} to {os.path.basename(output)}"):
+                if curr_exon & values[i]:
+                    curr_exon = curr_exon + values[i]
+                else:
+                    w.write(f"{curr_exon.bed}\n") 
+                    curr_exon = values[i]
+            w.write(f"{curr_exon.bed}\n")
                         
 
 if __name__ == '__main__':

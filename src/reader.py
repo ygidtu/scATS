@@ -171,6 +171,7 @@ def load_reads(bam: List[str], region: BED, barcode):
     :params region:
     :return generator: generate r1 and r2
     """
+    not_paired = False
     for b in bam: 
         r1s, r2s = [], []
 
@@ -180,12 +181,15 @@ def load_reads(bam: List[str], region: BED, barcode):
         # https://pysam.readthedocs.io/en/latest/faq.html
 
         for rec in r.fetch(region.chromosome, region.start, region.end, until_eof=True):
+            
+            if not rec.is_paired:
+                not_paired = True
+
             if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
                 continue
 
             if __get_strand__(rec) != region.strand:
                 continue
-            
             # only use the required barcodes for analysis
             if barcode[b]:
                 if not __is_barcode_exists__(barcode[b], rec):
@@ -201,6 +205,19 @@ def load_reads(bam: List[str], region: BED, barcode):
 
         r1s = sorted(r1s, key=lambda x: x.query_name)
         r2s = sorted(r2s, key=lambda x: x.query_name)
+
+        if not_paired:
+            for r in r1s:
+                r = Reads.create(r, single_end = True)
+                if r:
+                    yield r, None
+
+            for r in r2s:
+                r = Reads.create(r, single_end = True)
+                if r:
+                    yield r, None
+
+            return
 
         i, j = 0, 0
         while i < len(r1s) and j < len(r2s):
