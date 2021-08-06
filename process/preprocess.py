@@ -49,13 +49,14 @@ def process(gtf: str, output: str, span: int = 500):
     # get first exons
     first_exons = {"+": [], "-": []}
     for exons in track(transcripts.values(), description=f"Collecting first exons"):
-        exons = sorted(exons)
+        exons = sorted(exons, key=lambda x: [x.start, x.end])
         exon = exons[0]
         site = exon.start
-        if exons[0].strand != "+":
+        
+        if exon.strand != "+":
             exon = exons[-1]
             site = exon.end
-        
+
         exon = GTF(
             chromosome=exon.chromosome,
             start=max(site - span, 1),

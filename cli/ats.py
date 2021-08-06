@@ -115,7 +115,7 @@ class ATSParams(object):
         return st_arr
 
     def keys(self) -> List[str]:
-        res = ["utr", "reference_id", "reference_name", "infered_sites"]
+        res = ["utr", "reference_id", "reference_name", "number_of_reads", "infered_sites"]
         res += Parameters.keys()
         return res
 
@@ -148,7 +148,7 @@ class ATSParams(object):
             return m
         return None
 
-    def format_res(self, idx: int, res: Parameters) -> str:
+    def format_res(self, idx: int, res: Parameters, number_of_reads: int = 0) -> str:
         u"""
         as name says format ATS model results to meaningful str
         """
@@ -162,6 +162,7 @@ class ATSParams(object):
             f"{utr.chromosome}:{utr.start}-{utr.end}:{utr.strand}",
             utr.id,
             utr.name,
+            str(number_of_reads),
             ",".join(sites),
             res.to_res_str()
         ]
@@ -172,9 +173,11 @@ class ATSParams(object):
         Factory function to execute the ATS model and format results
         """
         if m:
+            # utr = self.utr[idx]
+            # return f"{utr.chromosome}:{utr.start}-{utr.end}:{utr.strand}\t{m}"
             res = m.run()
             if res:
-                return f"{self.format_res(idx, res)}"
+                return f"{self.format_res(idx, res, len(m.st_arr))}"
         return None
 
 

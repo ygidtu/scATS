@@ -282,8 +282,11 @@ class Coordinate(object):
         u"""
         convert reads coord to relative
         """
-        exons = reads.exon_parts
         res = []
+        if not reads:
+            return res
+        exons = reads.exon_parts
+
         for i in range(0, len(exons), 2):
             start = exons[i]
             end = exons[i + 1]

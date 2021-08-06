@@ -47,7 +47,7 @@ func zeros(size int) []string {
 }
 
 // format is used to format string
-func format(inChan chan [][]string, outChan chan string, barcodes map[string]int, wg *sync.WaitGroup) {
+func format(inChan chan [][]string, outChan chan []string, barcodes map[string]int, wg *sync.WaitGroup) {
 	defer wg.Done()
 
 	for {
@@ -57,24 +57,26 @@ func format(inChan chan [][]string, outChan chan string, barcodes map[string]int
 			break
 		}
 
-		res := zeros(len(barcodes))
-		rowId := ""
+		res := zeros(len(barcodes) + 1)
+
 		for _, cols := range rows {
-			if rowId == "" {
-				rowId = cols[0]
+			if res[0] == "" || res[0] == "0" {
+				res[0] = cols[0]
 			}
 
 			if idx, ok := barcodes[cols[1]]; ok {
-				res[idx] = cols[2]
+				res[idx+1] = cols[2]
 			}
 		}
 
-		outChan <- fmt.Sprintf("%s,%s\n", rowId, strings.Join(res, ","))
+		if res[0] != "" && res[0] != "0" {
+			outChan <- res
+		}
 	}
 }
 
 // write is save format string to file
-func write(output string, barcodes map[string]int, outChan chan string, wg *sync.WaitGroup) {
+func write(output string, barcodes map[string]int, outChan chan []string, wg *sync.WaitGroup) {
 	f, err := os.OpenFile(output, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, 0644)
 	if err != nil {
 		log.Err(err).Msgf("failed to open %s", output)
@@ -94,6 +96,7 @@ func write(output string, barcodes map[string]int, outChan chan string, wg *sync
 	w.WriteString(strings.Join(colnames, ","))
 	w.WriteString("\n")
 
+	rowIds := map[string]int{}
 	// save content
 	for {
 		line, ok := <-outChan
@@ -102,7 +105,10 @@ func write(output string, barcodes map[string]int, outChan chan string, wg *sync
 			break
 		}
 
-		w.WriteString(line)
+		if _, ok := rowIds[line[0]]; !ok {
+			w.WriteString(fmt.Sprintf("%s\n", strings.Join(line, ",")))
+			rowIds[line[0]] = 0
+		}
 	}
 
 	w.Flush()
@@ -118,6 +124,7 @@ func openFileToRead(input string, barText string) (*progressbar.ProgressBar, *bu
 	// Try to format file
 	stats, err := os.Stat(input)
 	if os.IsNotExist(err) {
+		fmt.Print(input)
 		log.Err(err).Msgf("%s not exists", input)
 	}
 
@@ -187,6 +194,10 @@ func collectBarcode(path string) (map[string]int, error) {
 func loadReference(path string) (map[string]int, error) {
 	barcodes := make(map[string]int)
 
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return barcodes, nil
+	}
+
 	bar, reader, f := openFileToRead(path, "Loading ref")
 	defer f.Close()
 
@@ -218,7 +229,7 @@ func processCounts(
 	barcodes map[string]int,
 ) map[string]int {
 	inChan := make(chan [][]string)
-	outChan := make(chan string)
+	outChan := make(chan []string)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -289,7 +300,7 @@ func processPSI(
 	barcodes, valid map[string]int,
 ) {
 	inChan := make(chan [][]string)
-	outChan := make(chan string)
+	outChan := make(chan []string)
 
 	var wg sync.WaitGroup
 	wg.Add(1)

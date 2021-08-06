@@ -40,13 +40,18 @@ from process.correlation import corr
     is_flag = True,
     help=""" Use spearman correlation instead of pearson. """
 )
-def coexp(input: str, output: str, distance: int, spearman: bool, barcode: str):
+@click.option(
+    "-g", "--group-info",
+    type=click.Path(),
+    help=""" Path to file contains group information, two columns required, 1st barcodes, 2nd group name. """
+)
+def coexp(input: str, output: str, distance: int, spearman: bool, barcode: str, group_info: str):
     u"""
     Co-expression
 
     Note: The input count file must be sorted by first column.
     """
-    corr(input, output, distance=distance, pearson=not spearman, barcode=barcode)
+    corr(input, output, distance=distance, pearson=not spearman, barcode=barcode, group_info=group_info)
 
 
 if __name__ == '__main__':

@@ -40,6 +40,10 @@ class UTRIndex(object):
     def end(self) -> int:
         return self.utr.end
 
+    @property
+    def strand(self) -> str:
+        return self.utr.strand
+
 
 class Expr(object):
     u"""
@@ -80,11 +84,14 @@ class Expr(object):
                 f = open(mtx)
                 r = f
             
+            read = 0
             for line in r:
-                progress.update(task_id, completed=f.tell())
-
                 if isinstance(line, bytes):
                     line = line.decode()
+                    progress.update(task_id, advance=f.tell() - read)
+                    read = f.tell()
+                else:
+                    progress.update(task_id, advance=len(line.encode()))
 
                 line = line.split()
 
@@ -165,11 +172,15 @@ class Expr(object):
 
         return res
 
-    def get_expr(self, index: int):
+    def get_expr(self, index: int, barcodes = None):
         u"""
         get list of expression values
         """
-        return [self.expr[index].get(x, 0) for x in self.barcodes]
+        if not barcodes:
+            barcodes = self.barcodes
+        else:
+            barcodes = [x for x in barcodes if x in self.barcodes]
+        return [self.expr[index].get(x, 0) for x in barcodes]
 
     def get_expr_str(self, index: int):
         return [str(self.expr[index].get(x, 0)) for x in self.barcodes]
@@ -187,33 +198,47 @@ class Expr(object):
         progress = custom_progress(io = True)
         with progress:
             task_id = progress.add_task("PSI... ", total = os.path.getsize(mtx))
-            
-            with open(mtx) as r:
-                for line in r:
-                    progress.update(task_id, advance=len(str.encode(line)))
-                    line = line.split()
 
-                    row_id, col_id, value = line[0],line[1], int(line[2])
-                    utr = row_id.split("_")[0]
+            if mtx.endswith(".gz"):
+                f = open(mtx, "rb")
+                r = gzip.GzipFile(fileobj=f)
+            else:
+                f = open(mtx)
+                r = f
 
-                    if utr != last_utr:
-                        if last_utr:
-                            for row in expr:
-                                row[-1] = row[-1] / summaries[row[1]]
-                                yield row
-                            summaries = {}
-                            expr = []
+            read = 0
+            for line in r:
+                if isinstance(line, bytes):
+                    line = line.decode()
+                    progress.update(task_id, advance=f.tell() - read)
+                    read = f.tell()
+                else:
+                    progress.update(task_id, advance=len(line.encode()))
+    
+                line = line.split()
 
-                        last_utr = utr
+                row_id, col_id, value = line[0],line[1], int(line[2])
+                utr = row_id.split("_")[0]
 
-                    summaries[col_id] = value + summaries.get(col_id, 0)
-                    expr.append([row_id, col_id, value])
+                if utr != last_utr:
+                    if last_utr:
+                        for row in expr:
+                            row[-1] = row[-1] / summaries[row[1]]
+                            yield row
+                        summaries = {}
+                        expr = []
+
+                    last_utr = utr
+
+                summaries[col_id] = value + summaries.get(col_id, 0)
+                expr.append([row_id, col_id, value])
+
+        r.close()
 
         for row in expr:
             row[-1] = row[-1] / summaries[row[1]]
             yield row
 
   
-
 if __name__ == '__main__':
     pass

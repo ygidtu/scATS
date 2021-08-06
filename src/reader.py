@@ -34,7 +34,7 @@ def load_ats(path: str, min_ats: int = 1) -> Dict:
             f"Reading... ", total=os.path.getsize(path))
 
         with open(path) as r:
-            for curr_idx, line in enumerate(r):
+            for _, line in enumerate(r):
                 if header:
                     header = False
                     continue
@@ -55,7 +55,7 @@ def load_ats(path: str, min_ats: int = 1) -> Dict:
                     record_id=""
                 )
 
-                alpha = line[3].split(",")
+                alpha = line[4].split(",")
                 if len(alpha) > min_ats:
                     if utr not in beds.keys():
                         beds[utr] = set()
