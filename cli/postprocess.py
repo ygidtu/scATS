@@ -45,7 +45,18 @@ from process.postprocess import count, psi
     type=click.BOOL,
     help=""" Wheter to save in gzip format. """
 )
-def postprocess(ats: str, output: str, bam: str, delimiter: str, processes: int,compress: bool):
+@click.option(
+    "--bulk",
+    is_flag=True,
+    type=click.BOOL,
+    help=""" Wheter the input bam is Nanopore or PacBio. """
+)
+def postprocess(
+    ats: str, output: str, 
+    bam: str, delimiter: str, 
+    processes: int,compress: bool,
+    bulk: bool
+):
     u"""
     Postprocess: count ats and calculate psi
     \f
@@ -61,7 +72,7 @@ def postprocess(ats: str, output: str, bam: str, delimiter: str, processes: int,
     c = f"{output}.count.gz" if compress else f"{output}.count"
     p = f"{output}.psi.gz" if compress else f"{output}.psi"
 
-    count(bams, ats = ats, output = c, processes = processes)
+    count(bams, ats = ats, output = c, processes = processes, bulk = bulk)
     psi(c, p)
 
 

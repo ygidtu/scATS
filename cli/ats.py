@@ -37,7 +37,8 @@ class ATSParams(object):
         max_unif_ws: float = 0.1,
         max_beta: int = 50,
         fixed_inference_flag: bool = False,
-        debug=False
+        debug: bool = False,
+        remove_duplicate_umi: bool = False
     ):
         u"""
         init this function
@@ -64,6 +65,7 @@ class ATSParams(object):
         self.max_beta = max_beta
         self.fixed_inference_flag = fixed_inference_flag
         self.debug = debug
+        self.remove_duplicate_umi = remove_duplicate_umi
 
     @staticmethod
     def check_path(bams: List[str]) -> List[str]:
@@ -126,7 +128,12 @@ class ATSParams(object):
         """
         if idx < len(self.utr):
             # only use R1
-            reads = load_reads(self.bam, self.utr[idx], barcode = self.barcodes)
+            reads = load_reads(
+                self.bam, 
+                self.utr[idx], 
+                barcode = self.barcodes,
+                remove_duplicate_umi = self.remove_duplicate_umi
+            )
             utr = self.utr[idx]
 
             st_arr = self.__format_reads_to_relative__(reads, utr)
@@ -177,7 +184,7 @@ class ATSParams(object):
             # return f"{utr.chromosome}:{utr.start}-{utr.end}:{utr.strand}\t{m}"
             res = m.run()
             if res:
-                return f"{self.format_res(idx, res, len(m.st_arr))}"
+                return f"{self.format_res(idx, res, len(m.st_arr))}" # \t{','.join([str(x) for x in m.st_arr])}
         return None
 
 
@@ -262,12 +269,6 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     help=""" The length of UTR. """
 )
 @click.option(
-    "--utr-length",
-    type=int,
-    default=1000,
-    help=""" The estimate length of gene. """
-)
-@click.option(
     "--min-ws",
     type=float,
     default=0.01,
@@ -304,6 +305,12 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     default=1,
     help=""" How many cpu to use. """
 )
+@click.option(
+    "--remove-duplicate-umi",
+    is_flag=True,
+    type=click.BOOL,
+    help=""" Only kept reads with different UMIs for ATS inference. """
+)
 @click.argument("bams", nargs=-1, type=click.Path(exists=True), required=True)
 def ats(
     utr: str,
@@ -317,6 +324,7 @@ def ats(
     fixed_inference: bool,
     processes: int,
     debug: bool,
+    remove_duplicate_umi: bool,
     bams: List[str],
 ):
     u"""
@@ -339,7 +347,8 @@ def ats(
         max_unif_ws=max_unif_ws,
         max_beta=max_beta,
         fixed_inference_flag=fixed_inference,
-        debug=debug
+        debug=debug,
+        remove_duplicate_umi = remove_duplicate_umi
     )
 
     if debug:
