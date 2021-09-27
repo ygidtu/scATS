@@ -72,6 +72,87 @@ def load_ats(path: str, min_ats: int = 1) -> Dict:
     return beds
 
 
+def __extract_information__(line: str):
+    u"""
+    extract information from gff of gtf file
+    :param line: string after column 8 of gff|gtf file, eg: ID=xxx;Name=xxx or gene_id "xxx"; gene_name "xxx"
+    :return: dict
+    """
+    data = {}
+
+    for i in line.split(";"):
+        i = i.strip()
+        if not i:
+            continue
+
+        tmp = re.split(r"[= ]", i)
+
+        tmp_info = tmp[1].strip() if ":" not in tmp[1] else tmp[1].split(":")[1].strip()
+        data[tmp[0]] = tmp_info.replace("\"", "")
+
+    return data
+
+
+class GeneName(object):
+
+    def __init__(self, gene):
+        self.gene = gene
+    
+    def __str__(self):
+        return self.gene
+    
+    def to_str(self):
+        return self.__str__()
+
+
+def load_gtf(path: str) -> Dict:
+    u"""
+    load ats modeling output data
+    :param path: the path to ats modeling output file
+    :param min_ats: the minimum number of ATS locate in single UTR
+    :return dict: keys -> utr region; values -> list of splice region
+    """
+
+    beds = {}
+
+    progress = custom_progress(io = True)
+    with progress:
+        task_id = progress.add_task(
+            f"Reading... ", total=os.path.getsize(path))
+
+        with open(path) as r:
+            for _, line in enumerate(r):
+                progress.update(task_id, advance=len(str.encode(line)))
+
+                if line.startswith('#'):
+                    continue
+
+                line = line.strip().split()
+                if len(line) <= 8:
+                    continue
+
+                if line[2] != "transcript" and not "RNA" in line[2]:
+                    continue
+                
+                strand = line[6]
+
+                chrom, start_pos, end_pos = line[0], int(line[3]), int(line[4])
+                info = __extract_information__(" ".join(line[8:]))
+                gene = GeneName(info.get("gene_name", info.get("Parent")))
+
+                if gene not in beds.keys():
+                    beds[gene] = set()
+                
+                beds[gene].add(BED(
+                    chrom, start_pos, end_pos, strand,
+                    name="",
+                    record_id=""
+                ))
+
+    return beds
+
+
+
 def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED]:
     u"""
     Load extracted UTR from bed file
@@ -160,7 +241,7 @@ def __is_barcode_exists__(barcodes: dict, rec: pysam.AlignedSegment) -> bool:
     return cb[:min(3, len(cb))] in barcodes and cb in barcodes[cb[:min(3, len(cb))]]
 
 
-def load_reads(bam: List[str], region: BED, barcode):
+def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool = False):
     u"""
     Load reads, keys -> R1; values -> R2
     Only both R1
@@ -172,7 +253,8 @@ def load_reads(bam: List[str], region: BED, barcode):
     :return generator: generate r1 and r2
     """
     not_paired = False
-    for b in bam: 
+    for b in bam:
+        umis = set()
         r1s, r2s = [], []
 
         r = pysam.AlignmentFile(b) if isinstance(b, str) else b
@@ -194,6 +276,12 @@ def load_reads(bam: List[str], region: BED, barcode):
             if barcode[b]:
                 if not __is_barcode_exists__(barcode[b], rec):
                     continue
+            
+            # filter duplicate umi
+            if remove_duplicate_umi:
+                if not rec.has_tag("UB") or rec.get_tag("UB") in umis:
+                    continue
+                umis.add(rec.get_tag("UB"))
 
             if rec.is_read1:
                 r1s.append(rec)

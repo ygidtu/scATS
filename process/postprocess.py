@@ -15,7 +15,7 @@ import pysam
 from src.loci import BED
 from src.logger import log
 from src.progress import custom_progress
-from src.reader import check_bam, load_ats
+from src.reader import check_bam, load_ats, load_gtf
 from src.expression import Expr
 
 
@@ -54,6 +54,23 @@ class Bam(object):
                 if record.has_tag(cell_tag) and record.has_tag(umi_tag):
                     yield record.get_tag(cell_tag), record.get_tag(umi_tag)
 
+    def reads_bulk(self, region: BED):
+        u"""
+        generator to get all cell barcode and umi barcode from specific region
+        :params region: target region
+        :return the nubmer of reads
+        """
+        count = 0
+        with pysam.AlignmentFile(self.path) as r:
+            for record in r.fetch(region.chromosome, region.start, region.end):
+                if record.is_qcfail or record.is_unmapped:
+                    continue
+
+                if record.has_tag("NH") and record.get_tag("NH") > 1:
+                    continue
+                    
+                count += 1
+        return count
 
 def count_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue):
     u"""
@@ -82,7 +99,28 @@ def count_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue
         output_queue.put(res)
 
 
-def count(bams: Dict, output: str, ats: str, processes: int = 1) :
+def count_bulk_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue):
+    u"""
+    Count ATS from bulk bam
+    """
+    while True:
+        data = input_queue.get()
+        utr, regions = data
+
+        res = {}
+        for r in regions:
+            row_id = f"{utr.to_str()}_{r.to_str()}"
+
+            if row_id not in res.keys():
+                res[row_id] = {}
+
+            for b in bam_files:
+                res[row_id][b.label] = b.reads_bulk(r)
+        
+        output_queue.put(res)
+
+
+def count(bams: Dict, output: str, ats: str, processes: int = 1, bulk: bool = False) :
     u"""
     count 
     """
@@ -90,7 +128,7 @@ def count(bams: Dict, output: str, ats: str, processes: int = 1) :
     for i, j in bams.items():
         bam_files.append(Bam(i, j))
 
-    ats = load_ats(ats)
+    ats = load_gtf(ats) if ats.endswith("gtf") else load_ats(ats)
 
     input_queue = Queue()
     output_queue = Queue()
@@ -99,7 +137,7 @@ def count(bams: Dict, output: str, ats: str, processes: int = 1) :
     consumers = []
     for _ in range(processes):
         p = Process(
-            target=count_consumer,
+            target=count_consumer if not bulk else count_bulk_consumer,
             args=(
                 bam_files,
                 input_queue,
@@ -125,9 +163,12 @@ def count(bams: Dict, output: str, ats: str, processes: int = 1) :
 
             for row, data in res.items():
                 for col, val in data.items():
-                    if len(val) > 0:
-                        w.write(f"{row}\t{col}\t{len(val)}\n")
-                        w.flush()
+                    if not bulk:
+                        val = len(val)
+                        
+                    if val:
+                        w.write(f"{row}\t{col}\t{val}\n")
+                    w.flush()
             progress.update(task, advance=1)
 
         w.close()

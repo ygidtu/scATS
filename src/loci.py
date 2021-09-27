@@ -388,7 +388,7 @@ class Reads(Region):
                 return None
 
             try:
-                if record.get_tag("NH") > 1:
+                if record.has_tag("NH") and record.get_tag("NH") > 1:
                     return None
             except ValueError:
                 pass

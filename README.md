@@ -11,5 +11,5 @@ git clone git@github.com:ygidtu/scATS.git
 - [x] preprocess
 - [x] ATS model
 - [x] isoform identification
-- [ ] count
-- [ ] PSI
+- [x] count
+- [x] PSI
