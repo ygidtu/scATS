@@ -72,7 +72,8 @@ class Bam(object):
                 count += 1
         return count
 
-def count_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue):
+
+def count_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue, gtf: bool):
     u"""
     Count ATS
     """
@@ -82,7 +83,7 @@ def count_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue
 
         res = {}
         for r in regions:
-            row_id = f"{utr.to_str()}_{r.to_str()}"
+            row_id = f"{utr.to_str()}_{r.to_str()}" if not gtf else f"{utr}-{r.name}"
 
             if row_id not in res.keys():
                 res[row_id] = {}
@@ -99,7 +100,7 @@ def count_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue
         output_queue.put(res)
 
 
-def count_bulk_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue):
+def count_bulk_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue, gtf: bool):
     u"""
     Count ATS from bulk bam
     """
@@ -109,7 +110,7 @@ def count_bulk_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: 
 
         res = {}
         for r in regions:
-            row_id = f"{utr.to_str()}_{r.to_str()}"
+            row_id = f"{utr.to_str()}_{r.to_str()}" if not gtf else f"{utr}-{r.name}"
 
             if row_id not in res.keys():
                 res[row_id] = {}
@@ -128,7 +129,9 @@ def count(bams: Dict, output: str, ats: str, processes: int = 1, bulk: bool = Fa
     for i, j in bams.items():
         bam_files.append(Bam(i, j))
 
-    ats = load_gtf(ats) if ats.endswith("gtf") else load_ats(ats)
+    gtf = ats.endswith("gtf")
+
+    ats = load_gtf(ats) if gtf else load_ats(ats)
 
     input_queue = Queue()
     output_queue = Queue()
@@ -142,6 +145,7 @@ def count(bams: Dict, output: str, ats: str, processes: int = 1, bulk: bool = Fa
                 bam_files,
                 input_queue,
                 output_queue,
+                gtf,
             )
         )
         p.daemon = True

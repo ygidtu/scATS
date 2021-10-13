@@ -6,7 +6,6 @@ Created at 2021.04.25 by Zhang
 Preprocess of UTR bed and BAM, to get the data for model
 """
 import gzip
-import pickle
 import os
 import random
 import re
@@ -15,6 +14,7 @@ from typing import Dict, List
 import pysam
 
 from src.loci import BED, Reads
+from src.logger import log
 from src.progress import custom_progress
 
 
@@ -93,18 +93,6 @@ def __extract_information__(line: str):
     return data
 
 
-class GeneName(object):
-
-    def __init__(self, gene):
-        self.gene = gene
-    
-    def __str__(self):
-        return self.gene
-    
-    def to_str(self):
-        return self.__str__()
-
-
 def load_gtf(path: str) -> Dict:
     u"""
     load ats modeling output data
@@ -138,19 +126,18 @@ def load_gtf(path: str) -> Dict:
 
                 chrom, start_pos, end_pos = line[0], int(line[3]), int(line[4])
                 info = __extract_information__(" ".join(line[8:]))
-                gene = GeneName(info.get("gene_name", info.get("Parent")))
+                gene = info.get("gene_name", info.get("Parent"))
 
                 if gene not in beds.keys():
                     beds[gene] = set()
                 
                 beds[gene].add(BED(
                     chrom, start_pos, end_pos, strand,
-                    name="",
+                    name=info.get("transcript_name", info.get("Name")),
                     record_id=""
                 ))
 
     return beds
-
 
 
 def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED]:
@@ -262,67 +249,83 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
         # fetch with until_eof is faster on large bam file according to
         # https://pysam.readthedocs.io/en/latest/faq.html
 
-        for rec in r.fetch(region.chromosome, region.start, region.end, until_eof=True):
+        iterator = None
+        try:
+            iterator = r.fetch(region.chromosome, region.start, region.end, until_eof=True)
+        except ValueError as err:
             
-            if not rec.is_paired:
-                not_paired = True
-
-            if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
-                continue
-
-            if __get_strand__(rec) != region.strand:
-                continue
-            # only use the required barcodes for analysis
-            if barcode[b]:
-                if not __is_barcode_exists__(barcode[b], rec):
-                    continue
-            
-            # filter duplicate umi
-            if remove_duplicate_umi:
-                if not rec.has_tag("UB") or rec.get_tag("UB") in umis:
-                    continue
-                umis.add(rec.get_tag("UB"))
-
-            if rec.is_read1:
-                r1s.append(rec)
+            if region.chromosome.startswith("chr"):
+                region.chromosome = region.chromosome.replace("chr", "")
             else:
-                r2s.append(rec)
+                region.chromosome = "chr" + region.chromosome
 
-        if isinstance(b, str):
-            r.close()
+            try:
+                iterator = r.fetch(region.chromosome, region.start, region.end, until_eof=True)
+            except ValueError as err:
+                log.warn(err)
 
-        r1s = sorted(r1s, key=lambda x: x.query_name)
-        r2s = sorted(r2s, key=lambda x: x.query_name)
+        if iterator:
+            for rec in iterator:
+                
+                if not rec.is_paired:
+                    not_paired = True
 
-        if not_paired:
-            for r in r1s:
-                r = Reads.create(r, single_end = True)
-                if r:
-                    yield r, None
+                if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
+                    continue
 
-            for r in r2s:
-                r = Reads.create(r, single_end = True)
-                if r:
-                    yield r, None
+                if __get_strand__(rec) != region.strand:
+                    continue
+                # only use the required barcodes for analysis
+                if barcode[b]:
+                    if not __is_barcode_exists__(barcode[b], rec):
+                        continue
+                
+                # filter duplicate umi
+                if remove_duplicate_umi:
+                    if not rec.has_tag("UB") or rec.get_tag("UB") in umis:
+                        continue
+                    umis.add(rec.get_tag("UB"))
 
-            return
+                if rec.is_read1:
+                    r1s.append(rec)
+                else:
+                    r2s.append(rec)
 
-        i, j = 0, 0
-        while i < len(r1s) and j < len(r2s):
-            r1 = r1s[i]
-            r2 = r2s[j]
+            if isinstance(b, str):
+                r.close()
 
-            if r1.query_name < r2.query_name:
-                i += 1
-            elif r1.query_name > r2.query_name:
-                j += 1
-            else:
-                r1 = Reads.create(r1)
-                r2 = Reads.create(r2)
-                if r1 and r2 and region.is_cover(r1, 0) and region.is_cover(r2, 0):
-                    yield r1, r2
+            r1s = sorted(r1s, key=lambda x: x.query_name)
+            r2s = sorted(r2s, key=lambda x: x.query_name)
 
-                i += 1
+            if not_paired:
+                for r in r1s:
+                    r = Reads.create(r, single_end = True)
+                    if r:
+                        yield r, None
+
+                for r in r2s:
+                    r = Reads.create(r, single_end = True)
+                    if r:
+                        yield r, None
+
+                return
+
+            i, j = 0, 0
+            while i < len(r1s) and j < len(r2s):
+                r1 = r1s[i]
+                r2 = r2s[j]
+
+                if r1.query_name < r2.query_name:
+                    i += 1
+                elif r1.query_name > r2.query_name:
+                    j += 1
+                else:
+                    r1 = Reads.create(r1)
+                    r2 = Reads.create(r2)
+                    if r1 and r2 and region.is_cover(r1, 0) and region.is_cover(r2, 0):
+                        yield r1, r2
+
+                    i += 1
 
 
 def check_bam(path: str) -> bool:
