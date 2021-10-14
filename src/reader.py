@@ -140,7 +140,7 @@ def load_gtf(path: str) -> Dict:
     return beds
 
 
-def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED]:
+def load_utr(path: str, debug: bool = False) -> List[BED]:
     u"""
     Load extracted UTR from bed file
     :param path: path to bed file
@@ -163,8 +163,6 @@ def load_utr(path: str, utr_length: int = 1000, debug: bool = False) -> List[BED
                 progress.update(task_id, advance=len(str.encode(line)))
 
                 b = BED.create(line)
-                if len(b) > utr_length:
-                    continue
                 res.append(b)
 
     if not debug:
