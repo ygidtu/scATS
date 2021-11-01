@@ -42,6 +42,9 @@ class Region(object):
             self.strand
         )
 
+    def __len__(self) -> int:
+        return self.end - self.start
+
     def __hash__(self):
         return hash(self.__str__())
 
@@ -120,6 +123,8 @@ class Region(object):
 
 
 class GenomicLoci(Region):
+
+    __slots__ = ('chromosome', 'start', 'end', 'strand', 'gtf_line')
 
     def __init__(
         self, chromosome: str,
@@ -252,6 +257,16 @@ class GTF(Region):
             self.strand
         )
 
+    @property
+    def id(self) -> str:
+        if self.source == "gene":
+            return self.gene_name if self.gene_name else self.gene_id
+
+        if self.source == "exon":
+            return self.exon_id if self.exon_id else self.exon_name
+
+        return self.transcript_name if self.transcript_name else self.transcript_id
+
 
 class BED(Region):
     u"""
@@ -284,9 +299,6 @@ class BED(Region):
             self.name,
             self.strand
         )
-
-    def __len__(self) -> int:
-        return self.end - self.start
 
     @classmethod
     def create(cls, bed: str):

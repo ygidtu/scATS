@@ -79,6 +79,9 @@ def process(gtf: str, output: str, span: int = 500):
                     w.write(f"{curr_exon.bed}\n") 
                     curr_exon = values[i]
             w.write(f"{curr_exon.bed}\n")
+
+            # for i in values:
+            #     w.write(f"{i.bed}\n")
                         
 
 if __name__ == '__main__':

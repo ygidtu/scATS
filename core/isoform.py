@@ -5,6 +5,7 @@ Created at 2021.05.06 by Zhang
 
 This script contains the function to infer isoforms
 """
+import gzip
 import os
 import re
 from functools import lru_cache, reduce
@@ -14,8 +15,10 @@ import numpy as np
 import pysam
 
 from src.convert import Coordinate, TreeNode, Window, WinList
-from src.loci import BED, GenomicLoci
+from src.loci import BED, GenomicLoci, GTF
 from src.logger import log
+from src.progress import custom_progress
+
 
 np.seterr(divide='ignore', invalid='ignore')
 
@@ -388,14 +391,16 @@ class GTFUtils(object):
     - convert absolute gtf to relative
     """
 
-    def __init__(self, path: str):
+    def __init__(self, path: str, iterator: bool = True):
         u"""
         init the obj with path to gtf file
         """
         assert os.path.exists(path), f"{path} not exists"
-        path = os.path.abspath(path)
+        assert self.is_gtf(path), f"{path} is not gtf"
+        self.gtf = os.path.abspath(path)
 
-        self.gtf = self.index_gtf(path)
+        if iterator:
+            self.gtf = self.index_gtf()
 
     @staticmethod
     def is_gtf(infile):
@@ -436,29 +441,28 @@ class GTFUtils(object):
 
         return is_gtf
 
-    def index_gtf(self, input_gtf, sort_gtf=True, retry=0):
+    def index_gtf(self, sort_gtf=True, retry=0):
         u"""
         Created by ygidtu
         Extract only exon tags and keep it clean
-        :param input_gtf: path to input gtf file
         :param sort_gtf: Boolean value, whether to sort gtf file first
         :param retry: only try to sort gtf once
         :return path to compressed and indexed bgzipped gtf file
         """
-        if input_gtf is None:
+        if self.gtf is None:
             return None
 
-        gtf = self.is_gtf(input_gtf)
+        gtf = self.is_gtf(self.gtf)
 
         if gtf % 10 != 1:
             raise ValueError(
-                "gtf file required, %s seems not a valid gtf file" % input_gtf)
+                "gtf file required, %s seems not a valid gtf file" % self.gtf)
 
         index = False
         if gtf // 10 > 0:
-            output_gtf = input_gtf
+            output_gtf = self.gtf
         else:
-            output_gtf = input_gtf + ".gz"
+            output_gtf = self.gtf + ".gz"
         if not os.path.exists(output_gtf) or not os.path.exists(output_gtf + ".tbi"):
             index = True
 
@@ -469,26 +473,26 @@ class GTFUtils(object):
         # 2018.12.21 used to handle gtf not sorted error
         if sort_gtf and retry > 1:
             raise OSError(
-                "Create index for %s failed, and trying to sort it failed too" % input_gtf)
+                "Create index for %s failed, and trying to sort it failed too" % self.gtf)
         elif sort_gtf:
             data = []
 
-            # log.info("Sorting %s" % input_gtf)
+            # log.info("Sorting %s" % self.gtf)
 
-            old_input_gtf = input_gtf
-            input_gtf = re.sub("\.gtf$", "", input_gtf) + ".sorted.gtf"
+            old_gtf = self.gtf
+            self.gtf = re.sub("\.gtf$", "", self.gtf) + ".sorted.gtf"
 
-            output_gtf = input_gtf + ".gz"
+            output_gtf = self.gtf + ".gz"
 
-            if os.path.exists(input_gtf) and os.path.exists(output_gtf):
+            if os.path.exists(self.gtf) and os.path.exists(output_gtf):
                 return output_gtf
 
             try:
-                w = open(input_gtf, "w+")
+                w = open(self.gtf, "w+")
             except IOError as err:
                 w = open("/tmp/sorted.gtf")
 
-            with open(old_input_gtf) as r:
+            with open(old_gtf) as r:
                 for line in r:
                     if line.startswith("#"):
                         w.write(line)
@@ -515,10 +519,10 @@ class GTFUtils(object):
             w.close()
 
         if index:
-            # log.info("Create index for %s", input_gtf)
+            # log.info("Create index for %s", self.gtf)
             try:
                 pysam.tabix_index(
-                    input_gtf,
+                    self.gtf,
                     preset="gff",
                     force=True,
                     keep_original=True
@@ -530,7 +534,7 @@ class GTFUtils(object):
 
                 # log.error(err)
                 # log.error("Guess gtf needs to be sorted")
-                return index_gtf(input_gtf=input_gtf, sort_gtf=True, retry=retry + 1)
+                return self.index_gtf(sort_gtf=True, retry=retry + 1)
 
         return output_gtf
 
@@ -616,6 +620,40 @@ class GTFUtils(object):
             log.warn(err)
             return None
         return Coordinate(gene=gene_records[list(gene_ids)[0]], isoforms=res)
+    
+    def read_gtf(self):
+        path = self.gtf
+        # read gtf
+        progress = custom_progress(io = True)
+        res = []
+        gene = None
+        transcripts = {}
+        with progress:
+            task_id = progress.add_task(f"Reading...", total=os.path.getsize(path))
+
+            with gzip.open(path, "rt") if path.endswith("gz") else open(path, "r") as r:
+                for line in r:
+                    progress.update(task_id, advance=len(str.encode(line)))
+
+                    if line.startswith("#"):
+                        continue
+
+                    rec = GTF.create(line)
+
+                    if rec.source == "gene":
+                        if gene != rec:
+                            if gene is not None:
+                                res.append(Coordinate(gene, transcripts))
+                            gene = rec
+                            transcripts = {}
+                        continue
+
+                    if rec.source == "exon":
+                        if rec.transcript_name not in transcripts.keys():
+                            transcripts[rec.transcript_name] = []
+
+                        transcripts[rec.transcript_name].append(rec)
+        return res
 
 
 if __name__ == '__main__':

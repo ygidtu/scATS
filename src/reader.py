@@ -93,6 +93,7 @@ def __extract_information__(line: str):
     return data
 
 
+
 def load_gtf(path: str) -> Dict:
     u"""
     load ats modeling output data
@@ -264,7 +265,6 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
 
         if iterator:
             for rec in iterator:
-                
                 if not rec.is_paired:
                     not_paired = True
 
@@ -274,7 +274,7 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
                 if __get_strand__(rec) != region.strand:
                     continue
                 # only use the required barcodes for analysis
-                if barcode[b]:
+                if barcode.get(b):
                     if not __is_barcode_exists__(barcode[b], rec):
                         continue
                 
@@ -292,9 +292,6 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
             if isinstance(b, str):
                 r.close()
 
-            r1s = sorted(r1s, key=lambda x: x.query_name)
-            r2s = sorted(r2s, key=lambda x: x.query_name)
-
             if not_paired:
                 for r in r1s:
                     r = Reads.create(r, single_end = True)
@@ -307,6 +304,9 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
                         yield r, None
 
                 return
+
+            r1s = sorted(r1s, key=lambda x: x.query_name)
+            r2s = sorted(r2s, key=lambda x: x.query_name)
 
             i, j = 0, 0
             while i < len(r1s) and j < len(r2s):

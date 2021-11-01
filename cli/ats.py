@@ -5,18 +5,15 @@ Created at 2021.04.25 by Zhang
 
 Contians all the parameters and command line params handler
 """
-import gzip
-import json
-import os
-
 from multiprocessing import Process, Queue, cpu_count
-from typing import List, Optional, Union
+from typing import List, Optional
 
 import click
 
 from src.logger import init_logger, log
 from src.progress import custom_progress
-from src.reader import check_bam, load_reads, load_utr, load_barcodes
+from src.reader import check_bam, load_barcodes
+from core.isoform import GTFUtils
 
 from core.model import AtsModel, Parameters
 
@@ -28,7 +25,7 @@ class ATSParams(object):
 
     def __init__(
         self,
-        utr: str,
+        gtf: str,
         bam: List[str],
         n_max_ats: int = 5,
         n_min_ats: int = 1,
@@ -37,7 +34,9 @@ class ATSParams(object):
         max_beta: int = 50,
         fixed_inference_flag: bool = False,
         debug: bool = False,
-        remove_duplicate_umi: bool = False
+        remove_duplicate_umi: bool = False,
+        min_reads: int = 10,
+        utr_length: int = 500
     ):
         u"""
         init this function
@@ -48,7 +47,8 @@ class ATSParams(object):
 
         self.index, self.bam = None, None
 
-        self.utr = load_utr(utr, debug=debug)
+        gtf = GTFUtils(gtf, iterator = False)
+        self.gtf = gtf.read_gtf()
         self.bam = self.check_path(bam)
 
         self.barcodes = {b: load_barcodes(b.replace(".bam", ".barcode")) for b in self.bam}
@@ -64,6 +64,8 @@ class ATSParams(object):
         self.fixed_inference_flag = fixed_inference_flag
         self.debug = debug
         self.remove_duplicate_umi = remove_duplicate_umi
+        self.min_reads = min_reads
+        self.utr_length = utr_length
 
     @staticmethod
     def check_path(bams: List[str]) -> List[str]:
@@ -89,12 +91,8 @@ class ATSParams(object):
 
         return "\n".join(res)
 
-    def __iter__(self):
-        for i in range(len(self)):
-            yield i
-
     def __len__(self):
-        return len(self.utr)  # if not self.debug else 5
+        return len(self.gtf)
 
     @staticmethod
     def __format_reads_to_relative__(reads, utr) -> List[int]:
@@ -119,45 +117,10 @@ class ATSParams(object):
         res += Parameters.keys()
         return res
 
-    def get_model(self, idx: int):
-        u"""
-        get model by index
-        :param idx: the idx of utr
-        """
-        if idx < len(self.utr):
-            # only use R1
-            reads = load_reads(
-                self.bam, 
-                self.utr[idx], 
-                barcode = self.barcodes,
-                remove_duplicate_umi = self.remove_duplicate_umi
-            )
-            utr = self.utr[idx]
-
-            st_arr = self.__format_reads_to_relative__(reads, utr)
-
-            if len(st_arr) <= 1:
-                return None
-
-            m = AtsModel(
-                n_max_ats=self.n_max_ats,
-                n_min_ats=self.n_min_ats,
-                st_arr=st_arr,
-                utr_length=len(utr),
-                min_ws=self.min_ws,
-                max_unif_ws=self.max_unif_ws,
-                max_beta=self.max_beta,
-                fixed_inference_flag=self.fixed_inference_flag
-            )
-
-            return m
-        return None
-
-    def format_res(self, idx: int, res: Parameters, number_of_reads: int = 0) -> str:
+    def format_res(self, utr, res: Parameters, number_of_reads: int = 0) -> str:
         u"""
         as name says format ATS model results to meaningful str
         """
-        utr = self.utr[idx]
         site = utr.start if utr.strand == "+" else utr.end
 
         sites = [str(site + x if utr.strand == "+" else site - x)
@@ -173,37 +136,60 @@ class ATSParams(object):
         ]
         return "\t".join(data)
 
-    def run(self, idx: int, m: AtsModel) -> Optional[str]:
+    def run(self, idx: int) -> Optional[str]:
         u"""
         Factory function to execute the ATS model and format results
         """
-        if m:
-            # utr = self.utr[idx]
-            # return f"{utr.chromosome}:{utr.start}-{utr.end}:{utr.strand}\t{m}"
-            res = m.run()
-            if res:
-                return f"{self.format_res(idx, res, len(m.st_arr))}" # \t{','.join([str(x) for x in m.st_arr])}
-        return None
+        gene = self.gtf[idx]
+        gene.set_bams(self.bam)
+
+        utrs = []
+        reads = {}
+        for utr in gene.utr_per_transcript(span = self.utr_length // 2):
+            utrs.append(utr)
+
+            for r1, r2 in gene.reads(utr, remove_duplicate_umi = self.remove_duplicate_umi):
+                assign = set(gene.assign(r1)) & set(gene.assign(r2))
+                
+                for a in assign:
+                    if a not in reads:
+                        reads[a] = []
+
+                    reads[a].append([r1, r2])
+
+        for idx, rds in reads.items():    
+            if len(rds) < self.min_reads:
+                continue
+            utr = utrs[idx - 1]
+            st_arr = self.__format_reads_to_relative__(rds, utr)
+
+            if len(st_arr) <= 1:
+                continue
+
+            m = AtsModel(
+                n_max_ats=self.n_max_ats,
+                n_min_ats=self.n_min_ats,
+                st_arr=st_arr,
+                utr_length=len(utr),
+                min_ws=self.min_ws,
+                max_unif_ws=self.max_unif_ws,
+                max_beta=self.max_beta,
+                fixed_inference_flag=self.fixed_inference_flag
+            )
+
+            try:
+                res = m.run()
+                if res:
+                    yield f"{self.format_res(utr, res, len(m.st_arr))}" 
+            except Exception as err:
+                if self.debug:
+                    log.exception(err)
+                    exit(0)
+                else:
+                    log.error(err)
 
 
-def run(args):
-    u"""
-    """
-    params, idx_range = args
-    res = []
-    for idx in idx_range:
-        m = params.get_model(idx)
-        try:
-            temp = params.run(idx, m)
-            if temp:
-                res.append(temp)
-        except Exception as err:
-            continue
-
-    return res
-
-
-def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params: ATSParams, debug: bool = False):
+def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams):
     u"""
     Multiprocessing consumer to perform the ATS core function
     :param input_queue: multiprocessing.Queue to get the index
@@ -212,41 +198,33 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     """
 
     while True:
-        idx = input_queue.get()
+        gene = input_queue.get()
 
-        if idx is None:
-            log.debug(f"{os.getpid()} existing")
+        if gene is None:
             break
-        log.debug(f"{os.getpid()} processing {idx}")
-        m = params.get_model(idx)
-        res = None
-        try:
-            res = params.run(idx, m)
-        except Exception as err:
-            output_queue.put(None)
-            error_queue.put(m.dumps())
 
-            if debug:
-                log.exception(err)
-                exit(0)
-            else:
-                log.error(err)
-        finally:
+        for res in params.run(gene):
             output_queue.put(res)
 
 
 @click.command()
 @click.option(
-    "--utr",
+    "-g", "--gtf",
     type=click.Path(exists=True),
     required=True,
-    help=""" The path to utr file, bed format. """
+    help=""" The path to gtf file. """
 )
 @click.option(
     "-o", "--output",
     type=click.Path(),
     required=True,
     help=""" The path to output file. """
+)
+@click.option(
+    "-u", "--utr-length",
+    type=int,
+    default=500,
+    help=""" The length of UTR. """
 )
 @click.option(
     "--n-max-ats",
@@ -265,6 +243,12 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
     type=float,
     default=0.01,
     help=""" The minimum weight of ATSs. """
+)
+@click.option(
+    "--min-reads",
+    type=int,
+    default=10,
+    help=""" The minimum number of reads in UTR. """
 )
 @click.option(
     "--max-unif-ws",
@@ -305,11 +289,13 @@ def consumer(input_queue: Queue, output_queue: Queue, error_queue: Queue, params
 )
 @click.argument("bams", nargs=-1, type=click.Path(exists=True), required=True)
 def ats(
-    utr: str,
+    gtf: str,
     output: str,
     n_max_ats: int,
     n_min_ats: int,
+    utr_length: int,
     min_ws: float,
+    min_reads: int,
     max_unif_ws: float,
     max_beta: int,
     fixed_inference: bool,
@@ -329,7 +315,7 @@ def ats(
     log.info("ATS inference")
 
     params = ATSParams(
-        utr=utr,
+        gtf=gtf,
         bam=bams,
         n_max_ats=n_max_ats,
         n_min_ats=n_min_ats,
@@ -338,41 +324,32 @@ def ats(
         max_beta=max_beta,
         fixed_inference_flag=fixed_inference,
         debug=debug,
-        remove_duplicate_umi = remove_duplicate_umi
+        remove_duplicate_umi = remove_duplicate_umi,
+        utr_length=utr_length,
+        min_reads=min_reads,
     )
-
-    if debug:
-        run([params, range(len(params))])
-        exit(0)
 
     # init queues
     input_queue = Queue()
     output_queue = Queue()
-    error_queue = Queue()
 
     # generate consumers
     consumers = []
     for _ in range(processes):
         p = Process(
             target=consumer,
-            args=(
-                input_queue,
-                output_queue,
-                error_queue,
-                params,
-                debug
-            )
+            args=(input_queue, output_queue, params,)
         )
         p.daemon = True
         p.start()
         consumers.append(p)
 
+
     # producer to assign task
-    for i in params:
+    for i in range(len(params)):
         input_queue.put(i)
 
     progress = custom_progress()
-    
     with progress:
         task = progress.add_task("Computing...", total=len(params))
         with open(output, "w+") as w:
@@ -386,16 +363,6 @@ def ats(
                     w.flush()
 
                 progress.update(task, advance=1)
-
-    # kept the error data for further debugging
-    errors = []
-    while not error_queue.empty():
-        res = error_queue.get()
-        errors.append(res)
-
-    if errors:
-        with gzip.open(f"{output}.error_data.json.gz", "wt+") as w:
-            json.dump(errors, w, indent=4)
 
     log.info("DONE")
 

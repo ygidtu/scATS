@@ -24,7 +24,7 @@ from process.preprocess import process
 @click.option(
     "-l", "--utr-length",
     type=int,
-    default=500,
+    default=1000,
     help=""" The radius of UTR. """
 )
 def preprocess(gtf: str, output: str, utr_length: int):
@@ -32,7 +32,7 @@ def preprocess(gtf: str, output: str, utr_length: int):
     Preprocess: extract UTR from gtf file
     \f
     """
-    process(gtf=gtf, output=output, span=utr_length)
+    process(gtf=gtf, output=output, span=utr_length // 2)
 
 
 if __name__ == '__main__':

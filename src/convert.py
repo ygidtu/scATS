@@ -193,7 +193,9 @@ class Coordinate(object):
     object to handle the coordanite convertion of isoforms from reference file
     """
 
-    def __init__(self, gene: BED, isoforms:  Dict):
+    __slots__ = ('gene', 'isoforms', 'ids', 'bams', 'barcodes')
+
+    def __init__(self, gene: Region, isoforms:  Dict):
         u"""
         init
         :params gene: gene region
@@ -204,8 +206,6 @@ class Coordinate(object):
         self.isoforms = isoforms
         self.ids = self.__generate_isoform_idx__(isoforms)
         self.bams = []
-        self.__gene_pos__ = {i: idx for idx, i in enumerate(
-            range(self.gene.start, self.gene.end))}
 
         self.barcodes = {}
 
@@ -272,11 +272,26 @@ class Coordinate(object):
 
         return self.ids[idx - 1].name
 
-    def reads(self, region: BED) -> Dict:
+    def reads(self, region: BED, remove_duplicate_umi: bool = False) -> Dict:
         u"""
         load reads and convert and assign isoforms
         """
-        return load_reads(self.bams, region, self.barcodes)
+        return load_reads(
+            self.bams, region, self.barcodes, 
+            remove_duplicate_umi = remove_duplicate_umi
+        )
+
+    def __is_loci_inside_of_gene__(self, pos: int) -> bool:
+        u"""
+        Check whether a position is located inside of gene region
+        """
+        return self.gene.start <= pos < self.gene.end
+
+    def __relative_in_gene__(self, pos: int) -> int:
+        u"""
+        Convert a position to relative to gene
+        """
+        return pos - self.gene.start
 
     def reads_to_relative(self, reads: Reads, return_winlist: bool = False):
         u"""
@@ -291,26 +306,26 @@ class Coordinate(object):
             start = exons[i]
             end = exons[i + 1]
 
-            if start in self.__gene_pos__.keys() and end in self.__gene_pos__.keys():
-                start = self.__gene_pos__[start]
-                end = self.__gene_pos__[end]
+            if self.__is_loci_inside_of_gene__(start) and self.__is_loci_inside_of_gene__(end):
+                start = self.__relative_in_gene__(start)
+                end = self.__relative_in_gene__(end)
                 res.append(Region(
                     self.gene.chromosome,
                     start, end,
                     self.gene.strand
                 ))
-            elif start in self.__gene_pos__.keys():
+            elif self.__is_loci_inside_of_gene__(start):
                 res.append(Region(
                     self.gene.chromosome,
-                    self.__gene_pos__[start],
-                    self.__gene_pos__[start] + end - start,
+                    self.__relative_in_gene__(start),
+                    self.__relative_in_gene__(start) + end - start,
                     self.gene.strand
                 ))
-            elif end in self.__gene_pos__.keys():
+            elif self.__is_loci_inside_of_gene__(end):
                 res.append(Region(
                     self.gene.chromosome,
-                    self.__gene_pos__[end] - end + start,
-                    self.__gene_pos__[end],
+                    self.__relative_in_gene__(end) - end + start,
+                    self.__relative_in_gene__(end),
                     self.gene.strand
                 ))
 
@@ -369,6 +384,21 @@ class Coordinate(object):
 
         return assigned
 
+    def utr_per_transcript(self, span: int = 500):
+        for iso, exons in self.isoforms.items():
+            exons = sorted(exons)
+
+            site = exons[0].start if self.gene.strand == "+" else exons[-1].end
+
+            yield BED(
+                self.gene.chromosome, 
+                site - span, 
+                site + span, 
+                self.gene.strand, 
+                name = iso, 
+                record_id = self.gene.gene_name
+            )
+        
 
 if __name__ == '__main__':
     from rich import print
