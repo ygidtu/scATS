@@ -5,17 +5,16 @@ Created at 2021.04.25 by Zhang
 
 Contians all the parameters and command line params handler
 """
+import os
 from multiprocessing import Process, Queue, cpu_count
 from typing import List, Optional
 
 import click
-
+from core.isoform import GTFUtils
+from core.model import AtsModel, Parameters
 from src.logger import init_logger, log
 from src.progress import custom_progress
 from src.reader import check_bam, load_barcodes
-from core.isoform import GTFUtils
-
-from core.model import AtsModel, Parameters
 
 
 class ATSParams(object):
@@ -47,11 +46,12 @@ class ATSParams(object):
 
         self.index, self.bam = None, None
 
-        gtf = GTFUtils(gtf, iterator = False)
-        self.gtf = gtf.read_gtf()
+        gtf = GTFUtils(gtf, iterator=False)
+        self.gtf = gtf.read_gtf(debug)
         self.bam = self.check_path(bam)
 
-        self.barcodes = {b: load_barcodes(b.replace(".bam", ".barcode")) for b in self.bam}
+        self.barcodes = {b: load_barcodes(
+            b.replace(".bam", ".barcode")) for b in self.bam}
 
         if not self.bam:
             raise ValueError("Please input valid bam files")
@@ -113,14 +113,18 @@ class ATSParams(object):
         return st_arr
 
     def keys(self) -> List[str]:
-        res = ["utr", "reference_id", "reference_name", "number_of_reads", "infered_sites"]
+        res = ["utr", "gene_name", "transcript_name",
+               "number_of_reads", "infered_sites"]
         res += Parameters.keys()
         return res
 
-    def format_res(self, utr, res: Parameters, number_of_reads: int = 0) -> str:
+    def format_res(self, utr, res: Optional[Parameters], number_of_reads: int = 0) -> Optional[str]:
         u"""
         as name says format ATS model results to meaningful str
         """
+        if not res:
+            return None
+
         site = utr.start if utr.strand == "+" else utr.end
 
         sites = [str(site + x if utr.strand == "+" else site - x)
@@ -136,30 +140,53 @@ class ATSParams(object):
         ]
         return "\t".join(data)
 
-    def run(self, idx: int) -> Optional[str]:
+    def run(self, idx: int, strict: bool = False) -> List:
         u"""
         Factory function to execute the ATS model and format results
         """
         gene = self.gtf[idx]
         gene.set_bams(self.bam)
-
         utrs = []
         reads = {}
-        for utr in gene.utr_per_transcript(span = self.utr_length // 2):
+
+        for idx, utr in enumerate(gene.utr_per_transcript(span=self.utr_length // 2)):
+            # skip redudant utrs while tolerance mode
+            if not strict and utr in utrs:
+                continue
+
             utrs.append(utr)
 
-            for r1, r2 in gene.reads(utr, remove_duplicate_umi = self.remove_duplicate_umi):
-                assign = set(gene.assign(r1)) & set(gene.assign(r2))
-                
-                for a in assign:
-                    if a not in reads:
-                        reads[a] = []
+            total = 0
+            for r1, r2 in gene.reads(utr, remove_duplicate_umi=self.remove_duplicate_umi):
+                total += 1
+                if strict:
+                    assign = set(gene.assign(r1)) & set(gene.assign(r2))
 
-                    reads[a].append([r1, r2])
+                    for a in assign:
+                        if a not in reads:
+                            reads[a] = []
 
-        for idx, rds in reads.items():    
+                        reads[a].append([r1, r2])
+                else:
+                    if (idx + 1) not in reads.keys():
+                        reads[idx + 1] = []
+                    reads[idx + 1].append([r1, r2])
+            
+            # if utr.name in ['DDX11L1-202', 'DDX11L1-201']:
+            #     print(utr, total)
+
+            #     """
+            #     1       11619   12119   DDX11L1 DDX11L1-202     + 0
+            #     1       11760   12260   DDX11L1 DDX11L1-201     + 713
+            #     """
+
+        # total = 0
+        res = []
+        for idx, rds in reads.items():
+            # total += 1
             if len(rds) < self.min_reads:
                 continue
+
             utr = utrs[idx - 1]
             st_arr = self.__format_reads_to_relative__(rds, utr)
 
@@ -178,18 +205,15 @@ class ATSParams(object):
             )
 
             try:
-                res = m.run()
-                if res:
-                    yield f"{self.format_res(utr, res, len(m.st_arr))}" 
+                res.append(self.format_res(utr, m.run(), len(m.st_arr)))
             except Exception as err:
                 if self.debug:
                     log.exception(err)
-                    exit(0)
-                else:
-                    log.error(err)
+        # print(gene.isoforms.keys(), total)
+        return res
 
 
-def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams):
+def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams, strict: bool):
     u"""
     Multiprocessing consumer to perform the ATS core function
     :param input_queue: multiprocessing.Queue to get the index
@@ -203,8 +227,7 @@ def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams):
         if gene is None:
             break
 
-        for res in params.run(gene):
-            output_queue.put(res)
+        output_queue.put(params.run(gene, strict=strict))
 
 
 @click.command()
@@ -287,6 +310,12 @@ def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams):
     type=click.BOOL,
     help=""" Only kept reads with different UMIs for ATS inference. """
 )
+@click.option(
+    "--strict",
+    is_flag=True,
+    type=click.BOOL,
+    help=""" Only kept reads with different UMIs for ATS inference. """
+)
 @click.argument("bams", nargs=-1, type=click.Path(exists=True), required=True)
 def ats(
     gtf: str,
@@ -302,6 +331,7 @@ def ats(
     processes: int,
     debug: bool,
     remove_duplicate_umi: bool,
+    strict: bool,
     bams: List[str],
 ):
     u"""
@@ -312,6 +342,10 @@ def ats(
     """
 
     init_logger("DEBUG" if debug else "INFO")
+
+    output = os.path.abspath(output)
+    os.makedirs(os.path.dirname(output), exist_ok=True)
+
     log.info("ATS inference")
 
     params = ATSParams(
@@ -324,7 +358,7 @@ def ats(
         max_beta=max_beta,
         fixed_inference_flag=fixed_inference,
         debug=debug,
-        remove_duplicate_umi = remove_duplicate_umi,
+        remove_duplicate_umi=remove_duplicate_umi,
         utr_length=utr_length,
         min_reads=min_reads,
     )
@@ -334,16 +368,13 @@ def ats(
     output_queue = Queue()
 
     # generate consumers
-    consumers = []
     for _ in range(processes):
         p = Process(
             target=consumer,
-            args=(input_queue, output_queue, params,)
+            args=(input_queue, output_queue, params, strict, )
         )
         p.daemon = True
         p.start()
-        consumers.append(p)
-
 
     # producer to assign task
     for i in range(len(params)):
@@ -357,10 +388,10 @@ def ats(
             w.write(f"{header}\n")
 
             while not progress.finished:
-                res = output_queue.get(block=True, timeout=None)
-                if res:
-                    w.write(f"{res}\n")
-                    w.flush()
+                for res in output_queue.get(block=True, timeout=None):
+                    if res:
+                        w.write(f"{res}\n")
+                        w.flush()
 
                 progress.update(task, advance=1)
 

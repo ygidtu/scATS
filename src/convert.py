@@ -17,13 +17,14 @@ from src.reader import load_reads
 class Window:
     DEL_VAL = 1 << 31
 
-    def __init__(self, start: int = DEL_VAL, end: int = DEL_VAL):
+    def __init__(self, start: int = DEL_VAL, end: int = DEL_VAL, is_read1: bool = False):
         """
         :type start: int
         :type end: int
         """
         self.start = start
         self.end = end
+        self.is_read1 = is_read1
 
     def __key(self) -> Tuple[int, int]:
         return self.start, self.end
@@ -90,11 +91,11 @@ class Window:
             return Window(start, start + self.end - self.start)
 
     @classmethod
-    def create(cls, region: Region):
+    def create(cls, region: Reads):
         u"""
         convert retion to Window
         """
-        return cls(region.start, region.end)
+        return cls(region.start, region.end, is_read1=region.is_read1)
 
 
 class WinList(list):
@@ -277,8 +278,8 @@ class Coordinate(object):
         load reads and convert and assign isoforms
         """
         return load_reads(
-            self.bams, region, self.barcodes, 
-            remove_duplicate_umi = remove_duplicate_umi
+            self.bams, region, self.barcodes,
+            remove_duplicate_umi=remove_duplicate_umi
         )
 
     def __is_loci_inside_of_gene__(self, pos: int) -> bool:
@@ -309,24 +310,30 @@ class Coordinate(object):
             if self.__is_loci_inside_of_gene__(start) and self.__is_loci_inside_of_gene__(end):
                 start = self.__relative_in_gene__(start)
                 end = self.__relative_in_gene__(end)
-                res.append(Region(
-                    self.gene.chromosome,
-                    start, end,
-                    self.gene.strand
+                res.append(Reads(
+                    ref=self.gene.chromosome,
+                    start=start, end=end,
+                    strand=self.gene.strand,
+                    is_read1=reads.is_read1,
+                    name=reads.name
                 ))
             elif self.__is_loci_inside_of_gene__(start):
-                res.append(Region(
-                    self.gene.chromosome,
-                    self.__relative_in_gene__(start),
-                    self.__relative_in_gene__(start) + end - start,
-                    self.gene.strand
+                res.append(Reads(
+                    ref=self.gene.chromosome,
+                    start=self.__relative_in_gene__(start),
+                    end=self.__relative_in_gene__(start) + end - start,
+                    strand=self.gene.strand,
+                    is_read1=reads.is_read1,
+                    name=reads.name
                 ))
             elif self.__is_loci_inside_of_gene__(end):
-                res.append(Region(
-                    self.gene.chromosome,
-                    self.__relative_in_gene__(end) - end + start,
-                    self.__relative_in_gene__(end),
-                    self.gene.strand
+                res.append(Reads(
+                    ref=self.gene.chromosome,
+                    start=self.__relative_in_gene__(end) - end + start,
+                    end=self.__relative_in_gene__(end),
+                    strand=self.gene.strand,
+                    is_read1=reads.is_read1,
+                    name=reads.name
                 ))
 
         if return_winlist:
@@ -336,49 +343,49 @@ class Coordinate(object):
     def assign(self, reads: Reads):
         u"""
         wether all reads parts locate in exons of same transcript
+        :param reads: list of Reads
+        :param paired
         """
         assigned = []
 
         # convert reads to relative coord and cast into Region
-        reads = self.reads_to_relative(reads)
+        reads = sorted(self.reads_to_relative(reads))
 
         if not reads:
             return assigned
 
         # cast transcripts to Region
-        transcripts = {}
+        transcripts = []
         for i in self.relative:
             if i[0] > 0:
-                if i[0] not in transcripts.keys():
-                    transcripts[i[0]] = []
-                transcripts[i[0]].append(Region(
+                transcripts.append(BED(
                     self.gene.chromosome,
                     i[1], i[2],
-                    self.gene.strand
+                    self.gene.strand,
+                    record_id=i[0],
+                    name=i[0]
                 ))
 
+        transcripts = sorted(transcripts)
+
         # make sure the reads and transcripts are sorted
-        reads = sorted(reads)
+        matches = {}
+        i, j = 0, 0
+        while i < len(reads) and j < len(transcripts):
+            current_reads = reads[i]
+            current_trans = transcripts[j]
 
-        for idx, trans in transcripts.items():
-            trans = sorted(trans)
+            if current_reads < current_trans:
+                i += 1
+            elif current_reads > current_trans:
+                j += 1
+            else:
+                if current_trans.is_cover(current_reads, 5):
+                    matches[current_trans.id] = 1 + \
+                        matches.get(current_trans.id, 0)
+                i += 1
 
-            i, j, match = 0, 0, 0
-            while i < len(reads) and j < len(trans):
-                current_reads = reads[i]
-                current_trans = trans[j]
-
-                if current_reads < current_trans:
-                    i += 1
-                elif current_reads > current_trans:
-                    j += 1
-                else:
-                    if current_trans.is_cover(current_reads, 5):
-                        match += 1
-                        i += 1
-                    else:
-                        j += 1
-
+        for idx, match in matches.items():
             if match == len(reads):
                 assigned.append(idx)
 
@@ -391,14 +398,14 @@ class Coordinate(object):
             site = exons[0].start if self.gene.strand == "+" else exons[-1].end
 
             yield BED(
-                self.gene.chromosome, 
-                site - span, 
-                site + span, 
-                self.gene.strand, 
-                name = iso, 
-                record_id = self.gene.gene_name
+                self.gene.chromosome,
+                site - span,
+                site + span,
+                self.gene.strand,
+                name=iso,
+                record_id=self.gene.gene_name
             )
-        
+
 
 if __name__ == '__main__':
     from rich import print

@@ -381,7 +381,7 @@ class AtsModel(object):
         if len(rm_inds) == 0:
             return para
 
-        logger.warn(
+        logger.debug(
             f'Remove components {rm_inds} with weight less than min_ws={self.min_ws}.')
         keep_inds = np.array(
             [i for i in range(para.K) if not para.ws[i] < self.min_ws])

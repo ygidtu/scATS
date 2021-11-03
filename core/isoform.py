@@ -13,12 +13,10 @@ from typing import List
 
 import numpy as np
 import pysam
-
 from src.convert import Coordinate, TreeNode, Window, WinList
-from src.loci import BED, GenomicLoci, GTF
+from src.loci import BED, GTF, GenomicLoci
 from src.logger import log
 from src.progress import custom_progress
-
 
 np.seterr(divide='ignore', invalid='ignore')
 
@@ -621,7 +619,7 @@ class GTFUtils(object):
             return None
         return Coordinate(gene=gene_records[list(gene_ids)[0]], isoforms=res)
     
-    def read_gtf(self):
+    def read_gtf(self, debug: bool = False):
         path = self.gtf
         # read gtf
         progress = custom_progress(io = True)
@@ -646,6 +644,9 @@ class GTFUtils(object):
                                 res.append(Coordinate(gene, transcripts))
                             gene = rec
                             transcripts = {}
+
+                            if debug and len(res) > 30:
+                                break
                         continue
 
                     if rec.source == "exon":
@@ -653,6 +654,8 @@ class GTFUtils(object):
                             transcripts[rec.transcript_name] = []
 
                         transcripts[rec.transcript_name].append(rec)
+
+                    
         return res
 
 

@@ -67,7 +67,7 @@ def load_ats(path: str, min_ats: int = 1) -> Dict:
                                 beds[utr].add(
                                     BED(chrom, x - 1, x, strand, line[0], str(len(beds) + 1)))
                     except Exception as e:
-                        print(e)
+                        log.debug(e)
                         pass
     return beds
 
@@ -91,7 +91,6 @@ def __extract_information__(line: str):
         data[tmp[0]] = tmp_info.replace("\"", "")
 
     return data
-
 
 
 def load_gtf(path: str) -> Dict:
@@ -270,9 +269,10 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
 
                 if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
                     continue
-
+                
                 if __get_strand__(rec) != region.strand:
                     continue
+
                 # only use the required barcodes for analysis
                 if barcode.get(b):
                     if not __is_barcode_exists__(barcode[b], rec):
