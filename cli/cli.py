@@ -10,8 +10,8 @@ import click
 from cli.ats import ats
 from cli.coexp import coexp
 from cli.isoform import isoform
-from cli.postprocess import postprocess
-from cli.preprocess import preprocess
+from cli.counts import count
+
 
 VERSION = "0.0.1-beta"
 LABEL = "scATS"
@@ -37,10 +37,9 @@ def cli():
     pass
 
 
-cli.add_command(preprocess)
 cli.add_command(ats)
 cli.add_command(isoform)
-cli.add_command(postprocess)
+cli.add_command(count)
 cli.add_command(coexp)
 
 

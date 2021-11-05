@@ -18,16 +18,15 @@ from src.logger import log
 from src.progress import custom_progress
 
 
-def load_ats(path: str, min_ats: int = 1) -> Dict:
+def load_ats(path: str) -> Dict:
     u"""
     load ats modeling output data
     :param path: the path to ats modeling output file
-    :param min_ats: the minimum number of ATS locate in single UTR
     :return dict: keys -> utr region; values -> list of splice region
     """
 
     beds = {}
-    header = True
+    header = None
     progress = custom_progress(io = True)
     with progress:
         task_id = progress.add_task(
@@ -35,40 +34,40 @@ def load_ats(path: str, min_ats: int = 1) -> Dict:
 
         with open(path) as r:
             for _, line in enumerate(r):
-                if header:
-                    header = False
-                    continue
                 progress.update(task_id, advance=len(str.encode(line)))
                 line = line.strip().split("\t")
 
-                site = re.split(r"[:-]", line[0])
+                if not header:
+                    header = line
+                    continue
 
-                strand = site[-1]
+                data = {i: j for i, j in zip(header, line)}
 
-                if strand != "+":
-                    strand = "-"
-                chrom, start_pos, end_pos = site[0], int(site[1]), int(site[2])
+                chrom = data["utr"].split(":")
+                chrom = chrom[0]
 
-                utr = BED(
-                    chrom, start_pos, end_pos, strand,
-                    name="",
-                    record_id=""
-                )
+                strand = "+" if data["utr"].endswith(":+") else "-"
+                key = data["gene_name"]
 
-                alpha = line[4].split(",")
-                if len(alpha) > min_ats:
-                    if utr not in beds.keys():
-                        beds[utr] = set()
-                    try:
-                        for x in alpha:
-                            if x != "":
-                                x = int(float(x))
+                if "," in key:
+                    continue
 
-                                beds[utr].add(
-                                    BED(chrom, x - 1, x, strand, line[0], str(len(beds) + 1)))
-                    except Exception as e:
-                        log.debug(e)
-                        pass
+                alpha = data["infered_sites"].split(",")
+                
+                if key not in beds.keys():
+                    beds[key] = set()
+                try:
+                    for x in alpha:
+                        if x != "":
+                            x = int(float(x))
+
+                            beds[key].add(BED(
+                                chrom, x - 1, x, strand, 
+                                "{}_{}".format(data["gene_name"], data["transcript_name"]), str(len(beds) + 1)
+                            ))
+                except Exception as e:
+                    log.debug(e)
+                    pass
     return beds
 
 

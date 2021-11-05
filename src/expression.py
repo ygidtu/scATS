@@ -186,7 +186,7 @@ class Expr(object):
         return [str(self.expr[index].get(x, 0)) for x in self.barcodes]
 
     @classmethod
-    def get_psi(cls, mtx: str):
+    def get_psi(cls, mtx: str, min_ats: int = 1):
         u"""
         """
 
@@ -222,9 +222,10 @@ class Expr(object):
 
                 if utr != last_utr:
                     if last_utr:
-                        for row in expr:
-                            row[-1] = row[-1] / summaries[row[1]]
-                            yield row
+                        if len(expr) > min_ats:
+                            for row in expr:
+                                row[-1] = row[-1] / summaries[row[1]]
+                                yield row
                         summaries = {}
                         expr = []
 

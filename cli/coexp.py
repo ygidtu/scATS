@@ -8,7 +8,7 @@ This is used to calculate the co-expression ATS
 
 import click
 
-from process.correlation import corr
+from core.correlation import corr
 
 
 @click.command()

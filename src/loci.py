@@ -267,6 +267,9 @@ class GTF(Region):
 
         return self.transcript_name if self.transcript_name else self.transcript_id
 
+    @property
+    def is_duplicate(self) -> bool:
+        return "," in self.id
 
 class BED(Region):
     u"""
@@ -299,6 +302,25 @@ class BED(Region):
             self.name,
             self.strand
         )
+
+    def __add__(self, other):
+
+        def merge(s1, s2):
+            s1 = s1.split(",")
+            s2 = s2.split(",")
+
+            s = sorted(set(s1) | set(s2))
+            return ",".join(s)
+
+        if self & other:
+            return BED(
+                chromosome=self.chromosome,
+                start=min(self.start, other.start),
+                end=max(self.end, other.end),
+                strand=self.strand,
+                name = merge(self.name, other.name), 
+                record_id = merge(self.id, other.id)
+            )
 
     @classmethod
     def create(cls, bed: str):

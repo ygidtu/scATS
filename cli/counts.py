@@ -8,7 +8,7 @@ Functions used to count ats and calculate psi
 import click
 from multiprocessing import cpu_count
 
-from process.postprocess import count, psi
+from core.counts import count, psi
 
 
 @click.command()
@@ -51,7 +51,7 @@ from process.postprocess import count, psi
     type=click.BOOL,
     help=""" Wheter the input bam is Nanopore or PacBio. """
 )
-def postprocess(
+def count(
     ats: str, output: str, 
     bam: str, delimiter: str, 
     processes: int,compress: bool,

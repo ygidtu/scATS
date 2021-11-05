@@ -39,7 +39,7 @@ fa = None
 NOISE_WS = 0
 MAX_READS = 1000
 MIN_READS = 50
-READS_LEN = 1
+READS_LEN = 150
 
 
 def generate_tss(gtf, bed, total=None):
@@ -88,7 +88,7 @@ def generate_reads_length(
     frag_len_mu = len_mu_base + int(len_mu_rand * np.random.rand())
     np.random.seed(seed)
     frag_len_sd = len_sd_base + int(len_sd_rand * np.random.rand())
-
+    np.random.seed(seed)
     return np.random.normal(frag_len_mu, frag_len_sd, K)
 
 
@@ -98,12 +98,12 @@ def generate_normal_reads(
     len_sd_base=20, len_sd_rand=20
 ):
     random.seed(seed)
-    sigma = random.choices(range(40, 60, 5), k=1)
+    sigma = random.choices(range(30, 50, 5), k=1)
 
     np.random.seed(seed)
     r1_arr = np.random.normal(mu, sigma, K)
 
-    r2_arr = r1_arr + generate_reads_length(
+    length = generate_reads_length(
         K, seed=seed,
         len_mu_base=len_mu_base,
         len_mu_rand=len_mu_rand,
@@ -111,10 +111,12 @@ def generate_normal_reads(
         len_sd_rand=len_sd_rand
     )
 
+    r2_arr = r1_arr + [x // 2 if x < 300 else x - 150 for x in length]
+
     r1_arr = r1_arr.astype(int)
     r2_arr = r2_arr.astype(int)
 
-    return r1_arr, r2_arr
+    return [[x, x + READS_LEN - 1] for x in r1_arr], [[x - READS_LEN + 1, x] for x in r2_arr]
 
 
 def generate_uniform_reads(
@@ -129,16 +131,15 @@ def generate_uniform_reads(
         len_sd_base=len_sd_base,
         len_sd_rand=len_sd_rand
     )
-    length = length // 2
 
     np.random.seed(seed)
     r1_arr = np.random.uniform(mu - length, mu + length)
-    r2_arr = r1_arr + length * 2
+    r2_arr = r1_arr + length
 
     r1_arr = r1_arr.astype(int)
     r2_arr = r2_arr.astype(int)
 
-    return r1_arr, r2_arr
+    return [[x, x + READS_LEN - 1] for x in r1_arr], [[x - READS_LEN + 1, x] for x in r2_arr]
 
 
 def generate_reads(
@@ -164,7 +165,7 @@ def generate_reads(
         len_sd_rand=len_sd_rand
     )
 
-    return sorted(np.concatenate([r1_arr, noise1_arr])), sorted(np.concatenate([r2_arr, noise2_arr]))
+    return sorted(r1_arr + noise1_arr), sorted(r2_arr + noise2_arr)
 
 
 def create_reads(name, seq, r1_start, r2_start, ref_id=0, flag=67, tags=None):
@@ -215,17 +216,21 @@ def consumer(inQueue, outQueue, ref_ids):
         )
 
         reads = []
+        count = 1
         for i, j in zip(r1_arr, r2_arr):
+            
+            st1, en1 = i
+            st2, en2 = j
+            seq1 = fa.fetch(str(chrom), st1, en1)
+            seq1 = seq1.reverse.complement.seq if strand == "+" else seq1.seq
 
-            if strand == "+":
-                seq = fa.fetch(str(chrom), int(st), int(st) +
-                               READS_LEN - 1).reverse.complement.seq
-            else:
-                seq = fa.fetch(str(chrom), int(en) -
-                               READS_LEN + 1, int(en)).seq
+            seq2 = fa.fetch(str(chrom), st2, en2)
+            seq2 = seq2.reverse.complement.seq if strand == "+" else seq2.seq
 
             reads.append([
-                meta, seq, i, j,
+                f"{meta}_{count}", seq1, 
+                st1, # if strand == "+" else en1, 
+                st2, # if strand == "+" else en2,
                 67 if strand == "+" else 83, 
                 ref_ids[str(chrom)],
                 [
@@ -235,7 +240,9 @@ def consumer(inQueue, outQueue, ref_ids):
             ])
 
             reads.append([
-                meta, seq, i, j,
+                f"{meta}_{count}", seq2,
+                st1, # if strand == "+" else en1, 
+                st2, # if strand == "+" else en2,
                 147 if strand == "+" else 131, 
                 ref_ids[str(chrom)],
                 [
@@ -243,6 +250,7 @@ def consumer(inQueue, outQueue, ref_ids):
                     ("TS", int(st) if strand == "+" else int(en))
                 ]
             ])
+            count += 1
 
         outQueue.put(reads)
 

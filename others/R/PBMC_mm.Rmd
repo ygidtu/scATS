@@ -5,9 +5,10 @@ output: html_document
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_knit$set(root.dir = "/mnt/data8/zhangyiming/model")
 ```
 
-```{r cars}
+```{r cars, include=FALSE}
 library(Seurat)
 library(stringr)
 library(ggplot2)
@@ -15,17 +16,75 @@ library(ggrastr)
 library(ggpubr)
 library(harmony)
 library(ggrepel)
+library(trqwe)
+library(ComplexHeatmap)
+library(circlize)
+library(ggrepel)
 ```
 
 
 ```{R}
-mtx = NULL
+fs = data.frame(
+  bam = c(
+    "/mnt/raid64/ATS/alignments/cellranger/mm/sc5p_v2_mm_c57bl6_splenocyte_10k_5gex/outs/possorted_genome_bam.bam",
+    "/mnt/raid64/ATS/alignments/cellranger/mm/sc5p_v2_mm_c57bl6_splenocyte_1k_5gex/outs/possorted_genome_bam.bam",
+    "/mnt/raid64/ATS/alignments/cellranger/mm/vdj_v1_mm_balbc_pbmc_5gex/outs/possorted_genome_bam.bam",
+    "/mnt/raid64/ATS/alignments/cellranger/mm/vdj_nextgem_mm_pbmc4_5gex/outs/possorted_genome_bam.bam",
+    "/mnt/raid64/ATS/alignments/cellranger/mm/vdj_v1_mm_pbmc4_5gex/outs/possorted_genome_bam.bam",
+    "/mnt/raid64/ATS/alignments/cellranger/mm/vdj_v1_mm_c57bl6_pbmc_5gex/outs/possorted_genome_bam.bam"
+  ),
+  sample = c(
+    "c57bl6_splenocyte_10k",
+    "c57bl6_splenocyte_1k",
+    "balbc_pbmc",
+    "pbmc4_1",
+    "pbmc4_2",
+    "c57bl6_pbmc"
+  ),
+  species = c(
+    "c57bl6",
+    "c57bl6",
+    "balbc",
+    "unknown",
+    "unknown",
+    "c57bl6"
+  ),
+  tissue = c(
+    "splenocyte",
+    "splenocyte",
+    "pbmc",
+    "pbmc",
+    "pbmc",
+    "pbmc"
+  ),
+  cols = c(
+    "#3caea3",
+		"#3caea3",
+		"#f6d55c",
+		"#ed553b",
+		"#ed553b",
+		"#3caea3"
+  )
+)
 
-for (i in list.files("/mnt/raid64/ATS/alignments/cellranger/mm", pattern = "pbmc", full.names = T)) {
-    key = str_split(basename(i), "_")[[1]]
+mtx = NULL
+meta = NULL
+for (i in 1:nrow(fs)) {
+    key = fs$sample[i]
+    print(i)
+    temp = Read10X(paste(dirname(fs$bam[i]), "filtered_feature_bc_matrix", sep = "/"))
+    colnames(temp) = paste(colnames(temp), key, sep = "_")
     
-    temp = Read10X(paste(i, "outs", "filtered_feature_bc_matrix", sep = "/"))
-    colnames(temp) = paste(key[2], key[4], colnames(temp), sep = "_")
+    meta = rbind(
+      meta,
+      data.frame(
+        Cells = colnames(temp),
+        sample = rep(fs$sample[i], ncol(temp)),
+        species = rep(fs$species[i], ncol(temp)),
+        tissue = rep(fs$tissue[i], ncol(temp)),
+        col = rep(fs$cols[i], ncol(temp))
+      )
+    )
     
     if (is.null(mtx)) {
         mtx = temp
@@ -36,31 +95,62 @@ for (i in list.files("/mnt/raid64/ATS/alignments/cellranger/mm", pattern = "pbmc
     }
 }
 
-meta = data.frame(
-    Cells = colnames(mtx),
-    version = sapply(colnames(mtx), function(x) { str_split(x, "_")[[1]][1] }),
-    species = sapply(colnames(mtx), function(x) { str_split(x, "_")[[1]][2] })
-)
 
-meta$batch = as.numeric(factor(paste(meta$version, meta$species)))
+rownames(meta) <- meta$Cells
+
+
+# meta = data.frame(
+#     Cells = colnames(mtx),
+#     sample = sapply(colnames(mtx), function(x) { str_split(x, "-1_")[[1]][2] }),
+#     species = ifelse(str_detect(colnames(mtx), "c57bl6"), "c57bl6", "balbc")
+# )
 
 obj <- CreateSeuratObject(mtx, meta.data = meta)
 ```
 
 
+## scrublet
+```{R}
+fs$key = sapply(fs$bam, function(x) {
+  basename(dirname(dirname(x)))
+})
+
+scrublet = lapply(list.files("rds/scrublet/mm", pattern = "txt", full.names = T), function(f) {
+  temp = read.table(f)
+  temp$source = str_split(basename(f), ".txt")[[1]][1]
+  temp
+})
+
+scrublet = do.call(rbind, scrublet)
+scrublet = merge(scrublet, fs, by.x = "source", by.y = "key")
+scrublet$Cells = paste(scrublet$V1, scrublet$sample, sep = "_")
+
+saveRDS(scrublet, "rds/scrublet/mm/scrublets.rds")
+
+# obj <- mcreadRDS("rds/seurat/mm_expr.rds")
+# scrublet = readRDS("rds/scrublet/mm/scrublets.rds")
+
+obj = subset(obj, cells = as.character(scrublet$Cells)[scrublet$V3 == "False"])
+```
+
 
 ```{R}
 obj[["percent.mt"]] <- PercentageFeatureSet(obj, pattern = "^MT-")
-VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3)
+VlnPlot(obj, features = c("nFeature_RNA", "nCount_RNA", "percent.mt"), ncol = 3, pt.size = 0)
 ```
 
 ```{r}
 obj = NormalizeData(obj)
-obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 2000)
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 1000)
 
+VariableFeaturePlot(obj)
+```
+
+
+```{r}
 obj <- ScaleData(obj, features = row.names(obj))
 obj <- RunPCA(obj)
-obj <- RunHarmony(obj, group.by.vars = "batch")
+obj <- RunHarmony(obj, group.by.vars = "sample")
 
 obj@reductions$harmony@stdev = apply(obj@reductions$harmony@cell.embeddings, 2, sd)
 
@@ -72,6 +162,9 @@ n_pcs = 10
 obj <- FindNeighbors(obj, dims = 1:n_pcs)
 obj <- FindClusters(obj, resolution = .9) # seq(.5, .8, .1)
 obj <- RunUMAP(obj, dims = 1:n_pcs, reduction = "harmony")
+
+mcsaveRDS(obj@meta.data, "rds/seurat/mm_meta.rds")
+mcsaveRDS(obj, "rds/seurat/mm_expr.rds")
 ```
 
 
@@ -136,34 +229,35 @@ ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp))
 
 ```{r fig.height=6, fig.width=8}
 celltype = c(
-    "0"="B_cell", 
-    "1"="B_cell", 
-    "25"="HSC",
-    "14"="T_cell",
-    "21"="T_cell",
-    "23"="T_cell",
-    "15"="Neutrophil",
-    "12"="HSC",
-    "16"="Erythrocyte",
-    "22"="Erythrocyte",
-    "4"="B_cell",
-    "6"="B_cell",
-    "7"="B_cell",
-    "8"="B_cell",
-    "24"="B_cell",
-    "18"="B_cell",
-    "20"="Macrophage",
-    "10"="DC",
-    "17"="DC",
-    "2"="Monocyte",
-    "11"="B_cell",
-    "13"="Monocyte",
-    "26"="Monocyte",
-    "27"="Monocyte",
+    "0"="B", 
+    "1"="B", 
+    "2"="B", #
+    "3"="Monocyte",
+    "4"="T",
+    "5"="B",
+    "6"="B",
+    "7"="T",
+    "8"="B",
     "9"="Monocyte",
-    "19"="Macrophage",
-    "3"="T_cell",
-    "5"="T_cell"
+    "10"="B", #
+    "11"="T", #
+    "12"="Mix",
+    "13"="Mix", #
+    "14"="Macrophage",
+    "15"="T",
+    "16"="Monocyte",
+    "17"="Monocyte",  # 
+    "18"="T",
+    "19"="Monocyte", # 
+    "20"="HSC",
+    "21"="Neutrophil",
+    "22"="Erythrocyte",  # 
+    "23"="Monocyte",
+    "24"="Neutrophil",
+    "25"="HSC",
+    "26"="Mix",
+    "27"="Monocyte",
+    "28"="Mix"
 )
 
 obj@meta.data$CellType = as.character(obj@meta.data$RNA_snn_res.0.9)
@@ -202,14 +296,195 @@ DimPlot(obj, group.by = "CellType", label = T)
 ```
 
 
-```{r fig.height=12, fig.width=12}
-FeaturePlot(obj, features = as.character(markers$genes))
-```
+## Further
+
+### Monocyte
+```{R fig.height=10, fig.width=6}
+obj1 = subset(obj, cells = rownames(obj@meta.data)[obj@meta.data$CellType == "Monocyte"])
+
+obj1 = NormalizeData(obj1)
+obj1 = FindVariableFeatures(obj1, selection.method = "vst", nfeatures = 500)
+VariableFeaturePlot(obj1)
+
+obj1 <- ScaleData(obj1, features = row.names(obj1))
+obj1 <- RunPCA(obj1)
+ElbowPlot(obj)
+
+n_pcs = 10
+obj1 <- FindNeighbors(obj1, dims = 1:n_pcs)
+obj1 <- FindClusters(obj1, resolution = .9) # seq(.5, .8, .1)
+
+data = DotPlot(obj1, features = markers$genes)
+data = data$data
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
 
 
-```{r}
-temp = FindMarkers(obj, group.by = "CellType", ident.1 = c("3", "5"))
+meta = obj@meta.data
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("10", "12")], "CellType"] = "B"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("6", "18")], "CellType"] = "Macrophage"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("17")], "CellType"] = "HSC"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("16")], "CellType"] = "DC"
+
+
+data = DotPlot(obj, features = markers$genes, group.by = "CellType")
+data = data$data
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
 ```
+
+### Neutrophil
+```{R fig.height=10, fig.width=6}
+obj1 = subset(obj, cells = rownames(obj@meta.data)[obj@meta.data$CellType == "Neutrophil"])
+
+obj1 = NormalizeData(obj1)
+obj1 = FindVariableFeatures(obj1, selection.method = "vst", nfeatures = 500)
+VariableFeaturePlot(obj1)
+
+obj1 <- ScaleData(obj1, features = row.names(obj1))
+obj1 <- RunPCA(obj1)
+ElbowPlot(obj)
+
+n_pcs = 10
+obj1 <- FindNeighbors(obj1, dims = 1:n_pcs)
+obj1 <- FindClusters(obj1, resolution = .9) # seq(.5, .8, .1)
+
+data = DotPlot(obj1, features = markers$genes)
+data = data$data
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+
+
+meta = obj@meta.data
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("5")], "CellType"] = "B"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("9")], "CellType"] = "HSC"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("7")], "CellType"] = "Mast"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("6")], "CellType"] = "DC"
+
+
+data = DotPlot(obj, features = markers$genes, group.by = "CellType")
+data = data$data
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+### Erythrocyte
+```{R fig.height=10, fig.width=6}
+obj1 = subset(obj, cells = rownames(obj@meta.data)[obj@meta.data$CellType == "Erythrocyte"])
+
+obj1 = NormalizeData(obj1)
+obj1 = FindVariableFeatures(obj1, selection.method = "vst", nfeatures = 500)
+VariableFeaturePlot(obj1)
+
+obj1 <- ScaleData(obj1, features = row.names(obj1))
+obj1 <- RunPCA(obj1)
+ElbowPlot(obj)
+
+n_pcs = 10
+obj1 <- FindNeighbors(obj1, dims = 1:n_pcs)
+obj1 <- FindClusters(obj1, resolution = .9) # seq(.5, .8, .1)
+
+data = DotPlot(obj1, features = markers$genes)
+data = data$data
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+
+
+meta = obj@meta.data
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("0", "1", "2", "4")], "CellType"] = "B"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("3")], "CellType"] = "T"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("5")], "CellType"] = "HSC"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("7")], "CellType"] = "Macrophage"
+
+
+data = DotPlot(obj, features = markers$genes, group.by = "CellType")
+data = data$data
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+### Mix
+```{R fig.height=10, fig.width=6}
+obj1 = subset(obj, cells = rownames(obj@meta.data)[obj@meta.data$CellType == "Mix"])
+
+obj1 = NormalizeData(obj1)
+obj1 = FindVariableFeatures(obj1, selection.method = "vst", nfeatures = 500)
+VariableFeaturePlot(obj1)
+
+obj1 <- ScaleData(obj1, features = row.names(obj1))
+obj1 <- RunPCA(obj1)
+ElbowPlot(obj)
+
+n_pcs = 10
+obj1 <- FindNeighbors(obj1, dims = 1:n_pcs)
+obj1 <- FindClusters(obj1, resolution = .9) # seq(.5, .8, .1)
+
+data = DotPlot(obj1, features = markers$genes)
+data = data$data
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+
+
+meta = obj@meta.data
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("9")], "CellType"] = "Erythrocyte"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("10")], "CellType"] = "T"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("0", "5")], "CellType"] = "Neutrophil"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("12")], "CellType"] = "Macrophage"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("1", "2", "3", "4", "6", "7", "8", "11")], "CellType"] = "Monocyte"
+obj@meta.data[rownames(obj1@meta.data)[as.character(obj1@meta.data$RNA_snn_res.0.9) %in% c("13")], "CellType"] = "HSC"
+
+data = DotPlot(obj, features = markers$genes, group.by = "CellType")
+data = data$data
+data = merge(data, markers, by.x = "features.plot", by.y = "genes")
+ggplot(data, aes(x=id, y=features.plot, color = avg.exp.scaled, size = pct.exp)) +
+    geom_point() +
+    facet_grid(cell_id~., scale = "free", space = "free") +
+    ggpubr::theme_pubr() +
+    scale_color_gradient(low = "lightgrey", high = "blue") +
+  theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+```{R fig.height=4, fig.width=5}
+obj <- RunUMAP(obj, dims = 1:5, reduction = "harmony", reduction.name = "umap5")
+
+DimPlot(obj, label = T, group.by = "CellType", reduction = "umap5")
+```
+
 
 ## AUCell
 ```{R}
@@ -232,7 +507,7 @@ cells_assignment <- AUCell_exploreThresholds(cells_AUC, plotHist=TRUE, nCores=1,
 
 ```{R fig.height=4, fig.width=4}
 selectedThresholds <- getThresholdSelected(cells_assignment)
-umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+umap = as.data.frame(obj@reductions$umap5@cell.embeddings)
 
 
 auc = t(as.data.frame(getAUC(cells_AUC)))
@@ -282,8 +557,8 @@ ggsave(
 )
 
 saveRDS(obj, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/seurat_obj.rds")
-saveRDS(cells_rankings, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/cells_rankings.rds")
-saveRDS(cells_assignment, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/cells_assignment.rds")
+saveRDS(cells_rankings, "rds/cells_rankings.rds")
+saveRDS(cells_assignment, "rds/cells_assignment.rds")
 ```
 
 
@@ -381,79 +656,2189 @@ ggsave(
 ```
 
 
-### markers between species
 ```{r}
-markers = NULL
-for (i in  unique(obj@meta.data$CellType)) {
-  print(i)
-  temp = FindMarkers(obj, group.by = "species", ident.1 = rownames(obj@meta.data)[obj@meta.data$CellType == i & obj@meta.data$species == "pbmc4"], logfc.threshold = 0)
-  temp$gene = rownames(temp)
-  temp$cell = i
-  markers = rbind(markers, temp)
-}
+library(doMC)
+registerDoMC(3)
 
-saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/markers_expr.rds")
-```
-
-
-## PSI
-```{R}
-mtx = NULL
-for (i in list.files("/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/", pattern = "psi", full.names = T)) {
-  key = str_split(basename(i), "_")[[1]]
-  key = paste(key[2], key[4], sep = "_")
-  
-  temp = data.table::fread(i)
-  temp = as.data.frame(temp)
-  rownames(temp) <- make.unique(temp$V1)
-  temp = temp[, colnames(temp) != "V1"]
-  colnames(temp) <- paste(key, colnames(temp), sep = "_")
-  
-  if (is.null(mtx)) {
-    mtx = temp
-  } else {
-    cr = intersect(rownames(temp), rownames(mtx))
-    mtx = cbind(mtx[cr, ], temp[cr, ])
-  }
-}
-
-meta = obj@meta.data
-
-meta$group = paste(meta$CellType, meta$species)
-meta$group = factor(meta$group)
-
-icas <- ICAS::ICASDataSetFromMatrix(round(mtx), colData = meta, design = "group")
-ICAS::psi(icas) <- as.matrix(mtx)
-```
-
-### markers between species
-```{r}
-markers = NULL
-for (i in  unique(obj@meta.data$CellType)) {
-  print(i)
-  tryCatch({
-    temp = ICAS::FindMarkers(
-    icas, 
-    group.by = "group", 
-    ident.1 = paste(i, "pbmc4"), 
-    ident.2 = paste(i, "balbc"), 
-    delta.threshold = 0, test.use = "tobit",
-    min.pct = -1
+markers = foreach(i = unique(obj@meta.data$CellType), .combine = "rbind", .errorhandling = "pass") %dopar% {
+  temp = Seurat::FindMarkers(
+    obj,
+    group.by = "CellType",
+    ident.1 = rownames(obj@meta.data)[obj@meta.data$CellType == i],
+    ident.2 = rownames(obj@meta.data)[obj@meta.data$CellType != i],
+    logfc.threshold = 0
   )
   temp$gene = rownames(temp)
   temp$cell = i
-  markers = rbind(markers, temp)
+  return(temp)
+}
+
+saveRDS(markers, "rds/mouse_markers_expr_celltype.rds")
+```
+
+
+```{r}
+count = data.table::fread("filter/mouse.count.gz")
+count = as.data.frame(count)
+rownames(count) <- count$V1
+count = count[, colnames(count) != "V1"]
+
+data= data.table::fread("filter/mouse.psi.gz")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+
+
+meta = data.frame(
+    Cells = colnames(data),
+    CellType = obj@meta.data[colnames(data), "CellType"]
+)
+meta = na.omit(meta)
+rownames(meta) = meta$Cells
+
+data = data[, meta$Cells]
+count = data[, meta$Cells]
+
+meta$CellType = factor(meta$CellType)
+
+obj <- ICAS::ICASDataSetFromMatrix(
+  countData = count,
+  colData = meta,
+  design = "CellType"
+)
+
+ICAS::psi(obj) <- as.matrix(data)
+
+markers = ICAS::FindAllMarkers(obj)
+saveRDS(markers, "rds/markers/mouse_markers_celltype_psi.rds")
+
+```
+
+
+### species
+```{r}
+obj <- trqwe::mcreadRDS("rds/seurat/mm_expr.rds")
+
+cells = rownames(obj@meta.data)[obj@meta.data$tissue == "pbmc" & obj@meta.data$species %in% c("c57bl6",  "balbc")]
+
+obj <- subset(obj, cells = cells)
+
+obj = NormalizeData(obj)
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 1000)
+
+VariableFeaturePlot(obj)
+
+obj <- ScaleData(obj, features = row.names(obj))
+obj <- RunPCA(obj)
+obj <- RunHarmony(obj, group.by.vars = "sample")
+
+obj@reductions$harmony@stdev = apply(obj@reductions$harmony@cell.embeddings, 2, sd)
+
+ElbowPlot(obj, reduction = "harmony")
+
+n_pcs = 6
+obj <- FindNeighbors(obj, dims = 1:n_pcs)
+obj <- RunUMAP(obj, dims = 1:n_pcs, reduction = "harmony")
+
+# mcsaveRDS(obj@meta.data, "rds/seurat/mm_meta.rds")
+mcsaveRDS(obj, "rds/seurat/mouse_species_expr.rds")
+```
+
+
+```{r}
+obj <- mcreadRDS("rds/seurat/mouse_species_expr.rds")
+
+
+suppressMessages(library(RColorBrewer))
+cell_colors = brewer.pal(9, "Set1")
+names(cell_colors) <- sort(unique(obj@meta.data$CellType))
+
+umap$Cell = factor(umap$Cell, levels = sort(unique(obj@meta.data$CellType)))
+umap = umap[order(umap$Cell, decreasing = T), ]
+p1 <- make_cell_types_plot3(
+  umap, 
+  group_by = "Cell", 
+  label = "Cell", 
+  title = "", 
+  text_size = 5,
+  colors = cell_colors
+)
+
+p1
+
+
+umap$species = factor(umap$species, levels = c("c57bl6", "balbc"))
+umap = umap[order(umap$species), ]
+
+p2 <- make_cell_types_plot3(
+  umap, 
+  group_by = "species", 
+  label = "species", 
+  title = "", 
+  text_size = 5,
+  colors = c(
+    "c57bl6"="lightgrey",
+    "balbc"="#f6d55c"
+  )
+)
+
+p2
+
+
+umap = umap[order(umap$species, decreasing = T), ]
+
+p3 <- make_cell_types_plot3(
+  umap, 
+  group_by = "species", 
+  label = "species", 
+  title = "", 
+  text_size = 5,
+  colors = c(
+    "c57bl6"="#3caea3",
+    "balbc"="lightgrey"
+  )
+)
+
+p3
+
+ggsave(
+    filename = "plots/mouse/species_expr_umap.pdf",
+    plot = cowplot::plot_grid(p1, p2, p3, nrow = 1), 
+    width = 15, height = 5
+)
+```
+
+```{r}
+data= data.table::fread("filter/mouse_species.count.gz")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+
+data = data[, rownames(obj@meta.data)]
+
+obj <- CreateSeuratObject(data[, rownames(obj@meta.data)], meta = obj@meta.data)
+obj = NormalizeData(obj)
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 1000)
+
+VariableFeaturePlot(obj)
+
+obj <- ScaleData(obj, features = row.names(obj))
+obj <- RunPCA(obj)
+obj <- RunHarmony(obj, "sample")
+
+obj@reductions$harmony@stdev = apply(obj@reductions$harmony@cell.embeddings, 2, sd)
+ElbowPlot(obj, reduction = "harmony")
+
+n_pcs = 10
+obj <- FindNeighbors(obj, dims = 1:n_pcs, reduction = "harmony")
+obj <- RunUMAP(obj, dims = 1:n_pcs, reduction = "harmony")
+
+
+trqwe::mcsaveRDS(obj, "rds/seurat/mouse_species_ats.rds")
+
+obj <- trqwe::mcreadRDS("rds/seurat/mouse_species_ats.rds")
+
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+umap$Cell = obj@meta.data[rownames(umap), "CellType"]
+umap$species = obj@meta.data[rownames(umap), "species"]
+
+suppressMessages(library(RColorBrewer))
+cell_colors = brewer.pal(9, "Set1")
+names(cell_colors) <- sort(unique(obj@meta.data$CellType))
+
+umap$Cell = factor(umap$Cell, levels = sort(unique(obj@meta.data$CellType)))
+umap = umap[order(umap$Cell, decreasing = T), ]
+p1 <- make_cell_types_plot3(
+  umap, 
+  group_by = "Cell", 
+  label = "Cell", 
+  title = "", 
+  text_size = 5,
+  colors = cell_colors
+)
+
+p1
+
+
+umap$species = factor(umap$species, levels = c("c57bl6", "balbc"))
+umap = umap[order(umap$species), ]
+
+p2 <- make_cell_types_plot3(
+  umap, 
+  group_by = "species", 
+  label = "species", 
+  title = "", 
+  text_size = 5,
+  colors = c(
+    "c57bl6"="lightgrey",
+    "balbc"="#f6d55c"
+  )
+)
+
+p2
+
+
+umap = umap[order(umap$species, decreasing = T), ]
+
+p3 <- make_cell_types_plot3(
+  umap, 
+  group_by = "species", 
+  label = "species", 
+  title = "", 
+  text_size = 5,
+  colors = c(
+    "c57bl6"="#3caea3",
+    "balbc"="lightgrey"
+  )
+)
+
+p3
+
+ggsave(
+    filename = "plots/mouse/species_count_umap.pdf",
+    plot = cowplot::plot_grid(p1, p2, p3, nrow = 1), 
+    width = 15, height = 5
+)
+```
+
+
+### markers between species
+```{r}
+markers = NULL
+for (i in  unique(obj@meta.data$CellType)) {
+  print(i)
+  t1 = rownames(obj@meta.data)[obj@meta.data$CellType == i & obj@meta.data$species == "balbc"]
+  t2 = rownames(obj@meta.data)[obj@meta.data$CellType == i & obj@meta.data$species == "c57bl6"]
+  
+  if (length(t1) > 3 && length(t2) > 3) {
+      temp = FindMarkers(
+        obj, 
+        group.by = "species", 
+        ident.1 = t1, 
+        ident.2 = t2, 
+        logfc.threshold = 0
+      )
+      temp$gene = rownames(temp)
+      temp$cell = i
+      markers = rbind(markers, temp)
+  }
+}
+
+# obj@meta.data$tissue[obj@meta.data$tissue == "balbc"] = "pbmc"
+
+saveRDS(markers, "rds/markers/mouse_markers_species_expr.rds")
+```
+
+
+```{r}
+obj <- trqwe::mcreadRDS("rds/seurat/mouse_species_expr.rds")
+count = data.table::fread("filter/mouse_species.count.gz")
+count = as.data.frame(count)
+rownames(count) <- count$V1
+count = count[, colnames(count) != "V1"]
+
+data= data.table::fread("filter/mouse_species.psi.gz")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+
+data = data[, rownames(obj@meta.data)]
+count = count[, rownames(obj@meta.data)]
+
+obj@meta.data$CellType = factor(obj@meta.data$CellType)
+
+obj <- ICAS::ICASDataSetFromMatrix(
+  countData = count,
+  colData = obj@meta.data,
+  design = "CellType"
+)
+
+ICAS::psi(obj) <- as.matrix(data)
+
+obj@colData$group = factor(paste(obj@colData$CellType, obj@colData$species, sep = "|"))
+obj@design = "group"
+
+markers = NULL
+for (i in unique(obj@colData$CellType)) {
+  
+  tryCatch({
+    temp = ICAS::FindMarkers(
+      obj, 
+      ident.1 = paste(i, "balbc", sep = "|"), 
+      ident.2 = paste(i, "c57bl6", sep = "|")
+    )
+    temp$cluster = i
+    temp$gene = rownames(temp)
+    markers = rbind(markers, temp)
   }, error = function(e) {
     print(e)
   })
 }
 
-saveRDS(markers, "/mnt/raid64/ATS/Personal/zhangyiming/quant/mm/markers_psi.rds")
+saveRDS(markers, "rds/markers/mouse_markers_species_psi.rds")
 ```
 
 
 ```{r}
-plot(density(rowSums(mtx)))
+obj <- readRDS("rds/seurat/mouse_species_expr.rds")
+
+augur = calculate_auc(
+  obj@assays$RNA@counts[, rownames(obj@meta.data)],
+  obj@meta.data, 
+  cell_type_col = "CellType", 
+  label_col = "species",
+  n_threads = 10
+)
+
+res = list()
+res[["expr"]] = list("AUC"=augur$AUC, "res"=augur$results)
+
+
+count = data.table::fread("filter/mouse_species.count.gz")
+count = as.data.frame(count)
+rownames(count) <- count$V1
+count = count[, colnames(count) != "V1"]
+
+data= data.table::fread("filter/mouse_species.psi.gz")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+
+data = data[, rownames(obj@meta.data)]
+count = count[, rownames(obj@meta.data)]
+
+
+augur = calculate_auc(
+  as.matrix(count),
+  obj@meta.data, 
+  cell_type_col = "CellType", 
+  label_col = "species",
+  n_threads = 1
+)
+res[["count"]] = list("AUC"=augur$AUC, "res"=augur$results)
+
+augur = calculate_auc(
+  as.matrix(data),
+  obj@meta.data, 
+  cell_type_col = "CellType", 
+  label_col = "species",
+  n_threads = 1
+)
+res[["psi"]] = list("AUC"=augur$AUC, "res"=augur$results)
+
 ```
+
+
+### tissue
+```{r}
+obj <- trqwe::mcreadRDS("rds/seurat/mm_expr.rds")
+
+cells = rownames(obj@meta.data)[obj@meta.data$species %in% c("c57bl6")]
+
+obj <- subset(obj, cells = cells)
+
+obj = NormalizeData(obj)
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 1000)
+
+VariableFeaturePlot(obj)
+
+obj <- ScaleData(obj, features = row.names(obj))
+obj <- RunPCA(obj)
+obj <- RunHarmony(obj, group.by.vars = "sample")
+
+obj@reductions$harmony@stdev = apply(obj@reductions$harmony@cell.embeddings, 2, sd)
+
+ElbowPlot(obj, reduction = "harmony")
+
+n_pcs = 10
+obj <- FindNeighbors(obj, dims = 1:n_pcs)
+obj <- RunUMAP(obj, dims = 1:n_pcs, reduction = "harmony")
+
+# mcsaveRDS(obj@meta.data, "rds/seurat/mm_meta.rds")
+mcsaveRDS(obj, "rds/seurat/mouse_tissue_expr.rds")
+```
+
+
+```{r}
+obj <- mcreadRDS("rds/seurat/mouse_tissue_expr.rds")
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+umap$Cell = obj@meta.data[rownames(umap), "CellType"]
+umap$species = obj@meta.data[rownames(umap), "tissue"]
+
+
+
+cell_colors = brewer.pal(9, "Set1")
+names(cell_colors) <- sort(unique(obj@meta.data$CellType))
+
+umap$Cell = factor(umap$Cell, levels = sort(unique(obj@meta.data$CellType)))
+umap = umap[order(umap$Cell, decreasing = T), ]
+p1 <- make_cell_types_plot3(
+  umap, 
+  group_by = "Cell", 
+  label = "Cell", 
+  title = "", 
+  text_size = 5,
+  colors = cell_colors
+)
+
+p1
+
+umap$species = factor(umap$species, levels = c("splenocyte", "pbmc"))
+umap = umap[order(umap$species), ]
+
+p2 <- make_cell_types_plot3(
+  umap, 
+  group_by = "species", 
+  label = "species", 
+  title = "", 
+  text_size = 5,
+  colors = c(
+    "splenocyte"="lightgrey",
+    "pbmc"="#D95F02"
+  )
+)
+
+p2
+
+
+umap = umap[order(umap$species, decreasing = T), ]
+
+p3 <- make_cell_types_plot3(
+  umap, 
+  group_by = "species", 
+  label = "species", 
+  title = "", 
+  text_size = 5,
+  colors = c(
+    "splenocyte"="#7570B3",
+    "pbmc"="lightgrey"
+  )
+)
+
+p3
+
+ggsave(
+    filename = "plots/mouse/tissue_expr_umap.pdf",
+    plot = cowplot::plot_grid(p1, p2, p3, nrow = 1), 
+    width = 15, height = 5
+)
+```
+
+
+### markers between tissue
+```{r}
+count = data.table::fread("filter/mouse_tissue.count.gz")
+count = as.data.frame(count)
+rownames(count) <- count$V1
+count = count[, colnames(count) != "V1"]
+
+data= data.table::fread("filter/mouse_tissue.psi.gz")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+
+data = data[, rownames(obj@meta.data)]
+count = count[, rownames(obj@meta.data)]
+
+obj@meta.data$CellType = factor(obj@meta.data$CellType)
+
+obj <- ICAS::ICASDataSetFromMatrix(
+  countData = count,
+  colData = obj@meta.data,
+  design = "CellType"
+)
+
+ICAS::psi(obj) <- as.matrix(data)
+
+obj@colData$group = factor(paste(obj@colData$CellType, obj@colData$tissue, sep = "|"))
+obj@design = "group"
+
+markers = NULL
+for (i in unique(obj@colData$CellType)) {
+  
+  tryCatch({
+    temp = ICAS::FindMarkers(
+      obj, 
+      ident.1 = paste(i, "splenocyte", sep = "|"), 
+      ident.2 = paste(i, "pbmc", sep = "|")
+    )
+    temp$cluster = i
+    temp$gene = rownames(temp)
+    markers = rbind(markers, temp)
+  }, error = function(e) {
+    print(e)
+  })
+}
+
+saveRDS(markers, "rds/markers/mouse_markers_tissue_psi.rds")
+```
+
+
+```{r}
+obj <- CreateSeuratObject(count[, rownames(obj@meta.data)], meta = obj@meta.data)
+obj = NormalizeData(obj)
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 1000)
+
+VariableFeaturePlot(obj)
+
+obj <- ScaleData(obj, features = row.names(obj))
+obj <- RunPCA(obj)
+obj <- RunHarmony(obj, "sample")
+ElbowPlot(obj, reduction = "harmony")
+
+n_pcs = 10
+obj <- FindNeighbors(obj, dims = 1:n_pcs, reduction = "harmony")
+obj <- RunUMAP(obj, dims = 1:n_pcs, reduction = "harmony")
+
+# mcsaveRDS(obj@meta.data, "rds/seurat/mm_meta.rds")
+mcsaveRDS(obj, "rds/seurat/mouse_tissue_ats.rds")
+```
+
+
+```{r}
+obj <- mcreadRDS("rds/seurat/mouse_tissue_ats.rds")
+
+umap = as.data.frame(obj@reductions$umap@cell.embeddings)
+umap$Cell = obj@meta.data[rownames(umap), "CellType"]
+umap$species = obj@meta.data[rownames(umap), "tissue"]
+
+cell_colors = brewer.pal(9, "Set1")
+names(cell_colors) <- sort(unique(obj@meta.data$CellType))
+
+umap$Cell = factor(umap$Cell, levels = sort(unique(obj@meta.data$CellType)))
+umap = umap[order(umap$Cell, decreasing = T), ]
+p1 <- make_cell_types_plot3(
+  umap, 
+  group_by = "Cell", 
+  label = "Cell", 
+  title = "", 
+  text_size = 5,
+  colors = cell_colors
+)
+
+p1
+
+umap$species = factor(umap$species, levels = c("splenocyte", "pbmc"))
+umap = umap[order(umap$species), ]
+
+p2 <- make_cell_types_plot3(
+  umap, 
+  group_by = "species", 
+  label = "species", 
+  title = "", 
+  text_size = 5,
+  colors = c(
+    "splenocyte"="lightgrey",
+    "pbmc"="#D95F02"
+  )
+)
+
+p2
+
+
+umap = umap[order(umap$species, decreasing = T), ]
+
+p3 <- make_cell_types_plot3(
+  umap, 
+  group_by = "species", 
+  label = "species", 
+  title = "", 
+  text_size = 5,
+  colors = c(
+    "splenocyte"="#7570B3",
+    "pbmc"="lightgrey"
+  )
+)
+
+p3
+
+ggsave(
+    filename = "plots/mouse/tissue_count_umap.pdf",
+    plot = cowplot::plot_grid(p1, p2, p3, nrow = 1), 
+    width = 15, height = 5
+)
+```
+
+```{r}
+data = data.frame(x=1:11, y=1:11, col = c(sort(unique(obj@meta.data$CellType)), "c57bl6", "balbc"))
+cell_colors[["c57bl6"]] = "#3caea3"
+cell_colors[["balbc"]] = "#f6d55c"
+cell_colors[["splenocyte"]] = "#7570B3"
+cell_colors[["pbmc"]] = "#D95F02"
+
+ggsave(
+  filename = "plots/mouse/umap_legend.pdf",
+  plot = ggscatter(data, x="x", y="y", color = "col", palette = cell_colors)
+)
+```
+
+```{r}
+obj <- readRDS("rds/seurat/mouse_tissue_expr.rds")
+
+augur = calculate_auc(
+  obj@assays$RNA@counts[, rownames(obj@meta.data)],
+  obj@meta.data, 
+  cell_type_col = "CellType", 
+  label_col = "tissue",
+  n_threads = 10
+)
+
+res = list()
+res[["expr"]] = list("AUC"=augur$AUC, "res"=augur$results)
+
+
+count = data.table::fread("filter/mouse_tissue.count.gz")
+count = as.data.frame(count)
+rownames(count) <- count$V1
+count = count[, colnames(count) != "V1"]
+
+data= data.table::fread("filter/mouse_tissue.psi.gz")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+
+data = data[, rownames(obj@meta.data)]
+count = count[, rownames(obj@meta.data)]
+
+
+augur = calculate_auc(
+  as.matrix(count),
+  obj@meta.data, 
+  cell_type_col = "CellType", 
+  label_col = "tissue",
+  n_threads = 1
+)
+res[["count"]] = list("AUC"=augur$AUC, "res"=augur$results)
+
+augur = calculate_auc(
+  as.matrix(data),
+  obj@meta.data, 
+  cell_type_col = "CellType", 
+  label_col = "tissue",
+  n_threads = 1
+)
+res[["psi"]] = list("AUC"=augur$AUC, "res"=augur$results)
+
+saveRDS(res, "rds/augur/mouse_tissue.rds")
+```
+
+
+## Go
+
+```{R}
+utr = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/mm_utr.rds")
+
+gene = list()
+for (i in 1:nrow(utr)) {
+  i = utr[i, ]
+  temp = str_split(i["V4"], ",")[[1]]
+  temp_g = str_split(i["V5"], ",")[[1]]
+  
+  for (i in 1:length(temp)) {
+    if (str_detect(temp[i], "ENSMUSG")) {
+      gene[temp[i]] = temp_g[i]
+    }
+  }
+}
+
+utr$name = pbapply::pbsapply(utr$gene, function(x) { gene[[x]] })
+```
+
+## cell type
+```{r}
+suppressMessages(library(clusterProfiler))
+suppressMessages(library(org.Mm.eg.db))
+
+gene = list()
+markers = readRDS("rds/markers/mouse_markers_celltype_expr.rds")
+markers = markers[markers$avg_log2FC > .25 & markers$p_val_adj < 0.05, ]
+
+for (i in unique(markers$cell)) {
+  gene[[paste(i, "expr", sep = "_")]] = markers$gene[markers$cell == i]
+}
+
+markers = readRDS("rds/markers/mouse_markers_celltype_psi.rds")
+markers = markers[markers$avg_logFC > .25 & markers$p_val_adj < 0.05, ]
+markers$utr = sapply(markers$gene, function(x) { str_split(x, "_")[[1]][1] })
+markers = merge(markers, utr, by = "utr")
+
+
+for (i in unique(markers$cluster)) {
+  gene[[paste(i, "psi", sep = "_")]] = unique(markers$name[markers$cluster == i])
+}
+
+
+go = compareCluster(gene, fun = "enrichGO", ont = "BP", OrgDb = org.Mm.eg.db, keyType = "SYMBOL")
+go = simplify(go)
+
+saveRDS(go, "rds/go/mouse_celltype_psi_vs_expr.rds")
+```
+
+## tissue
+```{r}
+markers = readRDS("rds/markers/mouse_markers_tissue_expr.rds")
+markers = markers[markers$avg_log2FC > .25 & markers$p_val_adj < 0.05, ]
+
+markers_psi = readRDS("rds/markers/mouse_markers_tissue_psi.rds")
+markers_psi = markers_psi[markers_psi$avg_logFC > .25 & markers_psi$p_val_adj < 0.05, ]
+markers_psi$utr = sapply(markers_psi$gene, function(x) { str_split(x, "_")[[1]][1] })
+markers_psi = merge(markers_psi, utr, by = "utr")
+
+go = list()
+for (i in intersect(unique(markers$cell), unique(markers_psi$cluster))) {
+  print(i)
+  gene = list(
+    "Expr"=markers$gene[markers$cell == i],
+    "PSI"=markers_psi$name[markers_psi$cluster == i]
+  )
+  
+  temp = compareCluster(gene, fun = "enrichGO", ont = "BP", OrgDb = org.Mm.eg.db, keyType = "SYMBOL")
+  go[[i]] = simplify(temp)
+}
+
+saveRDS(go, "rds/go/mouse_tissue_psi_vs_expr.rds")
+```
+
+
+## species
+```{r}
+markers = readRDS("rds/markers/mouse_markers_species_expr.rds")
+markers = markers[markers$avg_log2FC > .25 & markers$p_val_adj < 0.05, ]
+
+markers_psi = readRDS("rds/markers/mouse_markers_species_psi.rds")
+markers_psi = markers_psi[markers_psi$avg_logFC > .25 & markers_psi$p_val_adj < 0.05, ]
+markers_psi$utr = sapply(markers_psi$gene, function(x) { str_split(x, "_")[[1]][1] })
+markers_psi = merge(markers_psi, utr, by = "utr")
+
+go = list()
+for (i in intersect(unique(markers$cell), unique(markers_psi$cluster))) {
+  print(i)
+  gene = list(
+    "Expr"=markers$gene[markers$cell == i],
+    "PSI"=markers_psi$name[markers_psi$cluster == i]
+  )
+  
+  tryCatch({
+    temp = compareCluster(gene, fun = "enrichGO", ont = "BP", OrgDb = org.Mm.eg.db, keyType = "SYMBOL")
+    go[[i]] = simplify(temp)
+  }, error = function(e) {
+    
+  })
+
+}
+
+saveRDS(go, "rds/go/mouse_species_psi_vs_expr.rds")
+```
+
+
+
+### Number of DEGs
+```{r}
+utr = read.table("/mnt/raid64/ATS/alignments/cellranger/ref/Mus_musculus/genes/genes_utr.bed")
+format_utr = function(utr) {
+  utr$utr = paste0(utr$V1, ":", utr$V2, "-", utr$V3, ":", utr$V6)
+
+  temp = pbapply::pblapply(1:nrow(utr), function(i) {
+    temp = NULL
+    x = str_split(utr$V4[i], ",")[[1]]
+    x = x[str_detect(x, "ENSMUSG")]
+    temp_row = utr[i, ]
+    
+    if (length(x) > 1) {
+      for (j in x) {
+        temp_row$gene = j
+        temp = rbind(temp, temp_row)
+      }
+    } else {
+      temp_row$gene = x[1]
+      temp = rbind(temp, temp_row)
+    }
+    temp
+  }, cl = 4)
+  
+  do.call(rbind, temp)
+}
+
+utr = format_utr(utr)
+saveRDS(utr, "rds/mm_utr.rds")
+```
+
+
+```{R fig.height=5, fig.width=6}
+cell_orders = c("HSC", "B", "T", "DC", "Monocyte", "Macrophage", "Neutrophil", "Mast", "Erythrocyte")
+
+load_expr_markers <- function(path, avg_log2FC = .25, p_val_adj = 0.05, return_data = FALSE, psi = FALSE) {
+  markers = readRDS(path)
+  if ("avg_logFC" %in% colnames(markers)) {
+    markers[,"avg_log2FC"] = markers[, "avg_logFC"]
+  }
+  markers = markers[abs(markers$avg_log2FC) > avg_log2FC & markers$p_val_adj < p_val_adj, ]
+  markers$type[markers$avg_log2FC > 0] = "Up"
+  markers$type[markers$avg_log2FC < 0] = "Down"
+  markers$cluster = factor(markers$cluster, levels = cell_orders)
+  
+  if (psi) {
+    markers$utr = sapply(markers$gene, function(x) { str_split(x, "_")[[1]][1] })
+    markers = merge(markers, utr, by = "utr")
+    markers = unique(markers[, c("cluster", "gene.y", "type")])
+  }
+
+
+  temp = markers %>%
+    group_by(cluster, type) %>%
+    add_tally() %>%
+    dplyr::select(cluster, type, n) %>%
+    unique() %>%
+    as.data.frame()
+  
+  temp$type = factor(temp$type, levels = c("Up", "Down"))
+  
+  if(return_data) {
+    return(temp)
+  }  
+  
+  ggbarplot(
+    temp, x="cluster", y="n", 
+    fill="type", # facet.by = "type", 
+    ncol = 1, xlab = "", ylab = "Number of genes", 
+    position = position_dodge(0.9),
+    # scales = "free_y",
+    ggtheme = theme_pubr() + theme(
+      legend.position = "none", 
+      axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1),
+      panel.grid.minor = element_line(size = 0.25, linetype = 'solid', colour = "lightgrey")
+    )
+  )
+}
+
+utr = readRDS("rds/mm_utr.rds")
+p1 = load_expr_markers("rds/markers/mouse_markers_expr.rds", return_data = F)
+p1
+
+p2 = load_expr_markers("rds/markers/mouse_markers_psi.rds", return_data = F, psi = F)
+p2
+
+getwd()
+ggsave(
+  filename = "plots/mouse/cell_type_specific_bar.pdf",
+  plot = cowplot::plot_grid(p1 + labs(title = "Expr"), p2 + labs(title = "PSI"), ncol = 1), 
+  width = 12, height = 8
+)
+```
+
+
+
+```{R}
+p1 = load_expr_markers("rds/markers/mouse_markers_expr_species.rds")
+p1
+
+p2 = load_expr_markers("rds/markers/mouse_markers_psi_species.rds", return_data = F)
+p2
+
+ggsave(
+  filename = "plots/mouse/cell_type_specific_bar_species.pdf",
+  plot = cowplot::plot_grid(p1, p2 + labs(title = "PSI"), ncol = 1), 
+  width = 12, height = 8
+)
+```
+
+## Create cell type barcode list
+```{R}
+obj <- readRDS("rds/seurat/mm_expr.rds")
+
+temp = data.frame(
+  bam = obj@meta.data$sample,
+  barcode = str_replace_all(obj@meta.data$Cells, "-1.*$", "-1"),
+  cell = obj@meta.data$CellType
+)
+
+write.table(
+  temp, "sashimi/source_lists/barcodes/mouse_celltype.list", 
+  row.names = F, col.names = F, 
+  quote = F, sep = "\t"
+)
+
+library(RColorBrewer)
+
+write.table(
+  data.frame(
+    cell = sort(unique(obj@meta.data$CellType)),
+    col = brewer.pal(9, "Set1")
+  ),
+  "sashimi/source_lists/barcodes/mouse_celltype.color", 
+  row.names = F, col.names = F, 
+  quote = F, sep = "\t"
+)
+```
+
+
+## Make Go plot
+```{r fig.height=10, fig.width=12}
+cell_orders = c(
+  "HSC", "B", "T", "DC",
+  "Monocyte", "Macrophage",
+  "Neutrophil", "Mast",
+  "Erythrocyte"
+)
+
+go <- readRDS("rds/go/mouse_celltype_psi_vs_expr.rds")
+
+p = dotplot(go)
+
+p = p + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+p$data$Cluster = sapply(p$data$Cluster, function(x) { str_split(x, "\n")[[1]][1] })
+p$data$Cluster = factor(p$data$Cluster, levels = paste(rep(cell_orders, each=2), c("expr", "psi"), sep = "_"))
+
+res = p$data
+
+res$cell = factor(str_replace_all(res$Cluster, "_(expr|psi)", ""), levels = cell_orders)
+res$x = ifelse(str_ends(res$Cluster, "expr"), "Expr", "ATS")
+
+p = ggscatter(
+  res, x="x", 
+  y="Description", 
+  size = "Count", 
+  color = "p.adjust", 
+  facet.by = "cell", 
+  nrow = 1, 
+  scales = "free_x",
+  xlab = "", ylab = "",
+  shape = "x",
+  ggtheme = theme_pubr(x.text.angle = 90, border = T) +
+    theme(panel.grid.major = element_line("lightgrey")),
+  legend = "right"
+) +
+  scale_color_gradient(high = "blue", low = "red") +
+  scale_shape_manual(values = c("Expr"=10, "ATS"=16))
+  
+p
+dir.create("plots/mouse", showWarnings = F, recursive = T)
+ggsave(
+  filename = "plots/mouse/go_celltype.pdf",
+  plot = p, width = 12, height = 10
+)
+```
+
+
+```{r fig.height=10, fig.width=10}
+go <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/go/mouse_tissue_psi_vs_expr.rds")
+
+plist = list()
+for (i in c("Macrophage", "Neutrophil", "B")) { # names(go)
+  plist[[i]] = dotplot(go[[i]]) + labs(title = i)
+}
+
+dir.create("plots/mouse", showWarnings = F, recursive = T)
+ggsave(
+  filename = "plots/mouse/go_tissue.pdf",
+  plot = cowplot::plot_grid(plotlist = plist, ncol = 3), 
+  width = 17, height = 5
+)
+
+ggsave(
+  filename = "plots/mouse/go_tissue1.pdf",
+  plot = cowplot::plot_grid(plotlist = plist, ncol = 3), 
+  width = 20, height = 5
+)
+```
+
+
+```{r fig.height=8, fig.width=15}
+go <- readRDS("rds/go/mouse_species_psi_vs_expr.rds")
+
+plist = list()
+for (i in names(go)) {
+  plist[[i]] = dotplot(go[[i]]) + labs(title = i)
+}
+
+dir.create("plots/mouse", showWarnings = F, recursive = T)
+ggsave(
+  filename = "plots/mouse/go_species.pdf",
+  plot = cowplot::plot_grid(plotlist = plist, ncol = 2), 
+  width = 30, height = 24
+)
+```
+
+## 
+```{R fig.height=5, fig.width=6}
+cell_orders = c(
+  "HSC", "B", "T", "DC",
+  "Monocyte", "Macrophage",
+  "Neutrophil", "Mast",
+  "Erythrocyte"
+)
+
+markers = readRDS("rds/markers/mouse_markers_species_expr.rds")
+markers = markers[abs(markers$avg_log2FC) > .25 & markers$p_val_adj < 0.05, ]
+markers$type[markers$avg_log2FC > 0] = "Up"
+markers$type[markers$avg_log2FC < 0] = "Down"
+markers$cluster = markers$cell
+markers$cluster = factor(markers$cluster, levels = cell_orders)
+
+temp = markers %>%
+  group_by(cluster, type) %>%
+  add_tally() %>%
+  dplyr::select(cluster, type, n) %>%
+  unique() %>%
+  as.data.frame()
+
+temp$type = factor(temp$type, levels = c("Up", "Down"))
+temp$source = "Lineage"
+
+p1 = ggbarplot(
+  temp, x="cluster", y="n", 
+  fill="type", facet.by = "type", 
+  ncol = 1, xlab = "", ylab = "Number of genes", 
+  ggtheme = theme_pubr() + theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)),
+  scale = "free_y", title = "PSI"
+)
+
+p1
+
+# markers = readRDS("rds/markers/mouse_markers_species_psi.rds")
+# 
+# temp = markers[markers$p_val_adj < 0.05, ]
+# 
+# markers = markers[abs(markers$avg_logFC) > .25 & markers$p_val_adj < 0.05, ]
+# markers$type[markers$avg_logFC > 0] = "Up"
+# markers$type[markers$avg_logFC < 0] = "Down"
+# markers$cluster = factor(markers$cluster, levels = cell_orders)
+# 
+# temp = markers %>%
+#   group_by(cluster, type) %>%
+#   add_tally() %>%
+#   dplyr::select(cluster, type, n) %>%
+#   unique() %>%
+#   as.data.frame()
+# 
+# temp$type = factor(temp$type, levels = c("Up", "Down"))
+# 
+# p2 = ggbarplot(
+#   temp, x="cluster", y="n", 
+#   fill="type", facet.by = "type", 
+#   ncol = 1, xlab = "", ylab = "Number of genes", 
+#   ggtheme = theme_pubr() + theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)),
+#   scale = "free_y",
+#   title = "PSI"
+# )
+# 
+# p2
+
+ggsave(
+  filename = "plots/mouse/species_bar.pdf",
+  plot = cowplot::plot_grid(p1, p2, ncol = 2), 
+  width = 12, height = 6
+)
+```
+
+
+```{R fig.height=5, fig.width=6}
+cell_orders = c(
+  "HSC", "B", "T", "DC",
+  "Monocyte", "Macrophage",
+  "Neutrophil", "Mast",
+  "Erythrocyte"
+)
+
+markers = readRDS("rds/markers/mouse_markers_tissue_expr.rds")
+markers = markers[abs(markers$avg_log2FC) > .25 & markers$p_val_adj < 0.05, ]
+markers$type[markers$avg_log2FC > 0] = "Up"
+markers$type[markers$avg_log2FC < 0] = "Down"
+markers$cluster = markers$cell
+markers$cluster = factor(markers$cluster, levels = cell_orders)
+
+temp1 = markers %>%
+  group_by(cluster, type) %>%
+  add_tally() %>%
+  dplyr::select(cluster, type, n) %>%
+  unique() %>%
+  as.data.frame()
+
+temp1$type = factor(temp1$type, levels = c("Up", "Down"))
+temp1$source = "Tissue"
+
+temp = rbind(temp, temp1)
+
+p1 = ggbarplot(
+  temp1, x="cluster", y="n", 
+  fill="type", facet.by = "type", 
+  ncol = 1, xlab = "", ylab = "Number of genes", 
+  ggtheme = theme_pubr() + theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)),
+  scale = "free_y", title = "PSI"
+)
+
+p1
+
+# markers = readRDS("rds/markers/mouse_markers_tissue_psi.rds")
+# markers = markers[abs(markers$avg_logFC) > .25 & markers$p_val_adj < 0.05, ]
+# markers$type[markers$avg_logFC > 0] = "Up"
+# markers$type[markers$avg_logFC < 0] = "Down"
+# markers$cluster = factor(markers$cluster, levels = cell_orders)
+# 
+# temp = markers %>%
+#   group_by(cluster, type) %>%
+#   add_tally() %>%
+#   dplyr::select(cluster, type, n) %>%
+#   unique() %>%
+#   as.data.frame()
+# 
+# temp$type = factor(temp$type, levels = c("Up", "Down"))
+# 
+# p2 = ggbarplot(
+#   temp, x="cluster", y="n", 
+#   fill="type", facet.by = "type", 
+#   ncol = 1, xlab = "", ylab = "Number of genes", 
+#   ggtheme = theme_pubr() + theme(legend.position = "none", axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)),
+#   scale = "free_y",
+#   title = "PSI"
+# )
+# 
+# p2
+
+ggsave(
+  filename = "plots/mouse/tissue_bar.pdf",
+  plot = cowplot::plot_grid(p1, p2, ncol = 2), 
+  width = 12, height = 6
+)
+
+
+p = ggbarplot(
+  temp, x="cluster", y="n", 
+  fill="source", facet.by = "type",
+  ncol = 1, xlab = "", ylab = "Number of genes", 
+  ggtheme = theme_pubr() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5)),
+  scale = "free_y",
+  position = position_dodge(.9)
+)
+
+ggsave(
+  filename = "plots/mouse/tissue_bar.pdf",
+  plot = p, 
+  width = 6, height = 5
+)
+
+```
+
+## Augur
+```{r}
+res = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/augur/mouse_species.rds")
+
+temp = as.data.frame(res$expr$AUC)
+temp$source = "Expr"
+
+temp1 = as.data.frame(res$count$AUC)
+temp1$source = "ATS"
+
+temp = rbind(temp, temp1)
+
+
+p1 = ggline(
+  temp, x = "cell_type",
+  y = "auc", color = "source", 
+  xlab = "", ggtheme = theme_pubr() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+)
+
+
+res = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/augur/mouse_tissue.rds")
+
+temp = as.data.frame(res$expr$AUC)
+temp$source = "Expr"
+
+temp1 = as.data.frame(res$count$AUC)
+temp1$source = "ATS"
+
+temp = rbind(temp, temp1)
+
+
+p2 = ggline(
+  temp, x = "cell_type", 
+  y = "auc", color = "source", 
+  xlab = "", title = "tissue",
+  ggtheme = theme_pubr() + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+)
+p2
+
+ggsave(
+  filename = "plots/mouse/augur.pdf",
+  plot = cowplot::plot_grid(p1, p2, ncol = 2),
+  width = 8, height = 4
+)
+```
+
+
+## Comparision of ATS
+```{r}
+read_psi_markers <- function(path) {
+  library(ggbreak)
+  cell_orders = c(
+    "HSC", "B", "T", "DC",
+    "Monocyte", "Macrophage",
+    "Neutrophil", "Mast",
+    "Erythrocyte"
+  )
+
+  markers = readRDS(path)
+  markers = markers[abs(markers$avg_logFC) > .25 & markers$p_val_adj < 0.05, ]
+  markers$type[markers$avg_logFC > 0] = "Up"
+  markers$type[markers$avg_logFC < 0] = "Down"
+  markers$cluster = factor(markers$cluster, levels = cell_orders)
+  
+  temp = markers %>%
+    group_by(cluster, type) %>%
+    add_tally() %>%
+    dplyr::select(cluster, type, n) %>%
+    unique() %>%
+    as.data.frame()
+  
+  temp$type = factor(temp$type, levels = c("Up", "Down"))
+  temp
+}
+
+# temp = read_psi_markers("rds/markers/mouse_markers_species_psi.rds")
+# temp$source = "Strain"
+
+temp = read_psi_markers("rds/markers/mouse_markers_tissue_psi.rds")
+temp$source = "Tissue"
+# temp = rbind(temp, temp1)
+
+
+lvls = temp[temp$source == "Strain", ]
+# temp$cluster = factor(temp$cluster, levels = c(lvls$cluster[order(lvls$n, decreasing = T)], temp$cluster[!temp$cluster %in% lvls$cluster]))
+
+
+p = ggbarplot(
+  temp[temp$type == "Up", ], 
+  x = "cluster", y="n", fill = "source", 
+  position = position_dodge(0.9),
+  ggtheme = theme_pubr() + theme(
+    panel.grid.major.y = element_line(color = "lightgrey"),
+    axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1)
+  ),
+  ylab = "Number of upregulated ATS", xlab = "",
+  # palette = "Paired"
+) + scale_y_break(c(2000, 4900),  ticklabels=c(5000, 5100))
+
+p
+
+ggsave(
+  filename = "plots/mouse/number_of_ats_bar_tissue.pdf",
+  plot = p,
+  width = 6, height = 4
+)
+```
+
+
+## Heatmap
+```{r fig.height=4, fig.width=6}
+getwd()
+obj <- trqwe::mcreadRDS("rds/seurat/mouse_species_expr.rds")
+
+markers = readRDS("rds/markers/mouse_markers_species_expr.rds")
+markers = markers[abs(markers$avg_log2FC) > 0.25 & markers$p_val_adj < 0.05, ]
+markers$type[markers$avg_log2FC > 0] = "Up"
+markers$type[markers$avg_log2FC < 0] = "Down"
+markers$cell = factor(markers$cell, levels = cell_orders)
+
+markers = markers[order(markers$cell, markers$type), ]
+
+meta = obj@meta.data
+# meta = meta[meta$CellType %in% unique(markers$cell), ]
+
+# set.seed(42)
+# meta = meta %>%
+#   group_by(CellType) %>%
+#   sample_n(100, replace = TRUE) %>%
+#   unique() %>%
+#   as.data.frame()
+# 
+# meta$CellType = factor(meta$CellType, levels = cell_orders)
+# meta = meta[order(meta$CellType), ]
+# 
+
+for (i in unique(markers$cell)) {
+  mtx = obj@assays$RNA@scale.data[as.character(markers$gene), as.character(meta$Cells[meta$CellType == i])]
+
+  ra = rowAnnotation(
+    Type = markers$type,
+    col = list(
+      Type = c("Up"="red", "Down"="blue")
+    )
+  )
+  
+  
+  h = Heatmap(
+    mtx, name = "Expr",
+    cluster_rows = F,
+    cluster_columns = F,
+    row_split = markers$cell,
+    column_split = meta$species[meta$CellType == i],
+    col = colorRamp2(c(-1, 0, 1), c("purple", "black", "yellow")),
+    use_raster = T,
+    show_row_names = F,
+    show_column_names = F,
+    left_annotation = ra
+  )
+  
+  draw(h)
+  break
+}
+
+```
+
+
+```{r}
+DotPlot(immune.combined, features = markers.to.plot, cols = c("blue", "red"), dot.scale = 8, split.by = "stim") +
+    RotatedAxis()
+```
+
+## Go
+```{r}
+obj <- mcreadRDS("/mnt/data8/zhangyiming/model/rds/seurat/mouse_species_expr.rds")
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/markers/mouse_markers_species_psi.rds")
+go <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/go/mouse_species_psi_vs_expr.rds")
+iso = read.table("/mnt/raid64/ATS/Personal/zhangyiming/model/isoform/mouse_species.isoform", header = T)
+# psi = mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/icas/mouse_psi_mtx.rds")
+
+data= data.table::fread("/mnt/raid64/ATS/Personal/zhangyiming/model/filter/mouse_species.psi.gz")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+
+utr = readRDS("/mnt/data8/zhangyiming/model/rds/mm_utr.rds")
+
+gene_ids = c()
+for (idx in 1:nrow(utr)) {
+  row = utr[idx, ]
+  
+  ids = str_split(row$V4, ",")[[1]]
+  genes = str_split(row$V5, ",")[[1]]
+  
+  for (i in 1:length(ids)) {
+    if  (str_detect(ids[i], "ENSMUSG")) {
+      gene_ids[[ids[i]]] = genes[i]
+    }
+  }
+}
+
+rm(genes, i, ids, idx)
+utr$gene = sapply(utr$gene, function(x) { gene_ids[[x]] })
+
+markers$utr = sapply(markers$gene, function(x) { str_split(x, "_")[[1]][1] })
+markers$ats = sapply(markers$gene, function(x) { str_split(x, "_")[[1]][2] })
+markers = merge(markers, utr[, c("utr", "gene")], by = "utr")
+```
+
+
+```{R}
+obj@meta.data$group = paste(obj@meta.data$CellType, obj@meta.data$species, sep = "|")
+
+cell_colors = c()
+cell_colors[["c57bl6"]] = "#3caea3"
+cell_colors[["balbc"]] = "#f6d55c"
+cell_colors[["splenocyte"]] = "#7570B3"
+cell_colors[["pbmc"]] = "#D95F02"
+
+
+temp = as.data.frame(go[["Neutrophil"]]@compareClusterResult)
+temp = temp[temp$Description == "regulation of leukocyte migration", ]
+temp = str_split(temp$geneID, "/")[[1]]
+
+plist_expr = list()
+for (i in temp) {
+  p = VlnPlot(obj, features = i, pt.size = 0, group.by = "group")
+  print(p)
+  # p = p$data[str_detect(p$data$ident, "Neutrophil"), ]
+  # p$ident = str_replace_all(p$ident, "^(\\w+)\\|", "")
+  # 
+  # p = ggboxplot(p, x="ident", y=i, title = i, fill = "ident", palette = cell_colors) + stat_compare_means(comparisons = list(c("balbc", "c57bl6")))
+  # plist_expr[[i]] = p
+}
+
+
+ggsave(
+  filename = "plots/mouse/leukocyte_migration.pdf",
+  plot = cowplot::plot_grid(plotlist = plist_expr, nrow = 2),
+  width = 10, height = 6
+)
+```
+
+
+```{r}
+library(reshape2)
+
+gene_ids = markers$gene.y
+names(gene_ids) = markers$gene.x
+
+markers$gene.x[str_detect(markers$gene.x, "1:74153489-74154491:+")]
+
+temp1 = unique(markers$gene.x[markers$gene.y %in% temp])
+
+mtx = data[temp1, rownames(obj@meta.data)]  # markers$gene.x[markers$gene.y %in% temp & markers$cluster == "Neutrophil" & markers$p_val_adj < 0.05 & markers$avg_logFC > .25]
+mtx = melt(as.matrix(mtx))
+mtx = na.omit(mtx)
+mtx$CellType = obj@meta.data[as.character(mtx$Var2),  "CellType"]
+mtx$species = obj@meta.data[as.character(mtx$Var2),  "species"]
+mtx$gene = sapply(as.character(mtx$Var1), function(x) { gene_ids[[x]] })
+
+
+cell_colors = c()
+cell_colors[["c57bl6"]] = "#3caea3"
+cell_colors[["balbc"]] = "#f6d55c"
+cell_colors[["splenocyte"]] = "#7570B3"
+cell_colors[["pbmc"]] = "#D95F02"
+
+mtx = mtx[mtx$CellType ==  "Neutrophil", ]
+
+plist = list()
+for (i in unique(mtx$Var1)) {
+  
+  if(!unique(mtx$gene[mtx$Var1 == i]) %in% c("Il1b", "Cxcr2", "Traf3")) {
+    next
+  }
+  
+  p = ggboxplot(
+    mtx[mtx$Var1 == i, ], 
+    x="species", 
+    y="value", 
+    fill = "species",
+    xlab = "", ylab = "PSI",
+    palette = cell_colors,
+    title = unique(mtx$gene[mtx$Var1 == i]), 
+    subtitle = i,
+    legend = "none"
+  ) + 
+    stat_compare_means(comparisons = list(c("c57bl6", "balbc")))
+  plist[[i]] = p
+}
+
+plist
+
+iso[iso$ats %in% markers$ats[markers$gene.y %in% temp & markers$cluster == "Neutrophil" & markers$p_val_adj < 0.05 & markers$avg_logFC > .25], ]
+
+
+ggsave(
+  filename = "/mnt/data8/zhangyiming/model/plots/mouse/go_psi_il1b.pdf",
+  plot = cowplot::plot_grid(plotlist = plist, ncol = 3), 
+  width = 12, height = 6
+)
+```
+
+
+## tissue
+```{r}
+obj <- mcreadRDS("/mnt/data8/zhangyiming/model/rds/seurat/mouse_tissue_expr.rds")
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/markers/mouse_markers_tissue_psi.rds")
+go <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/go/mouse_tissue_psi_vs_expr.rds")
+iso = read.table("/mnt/raid64/ATS/Personal/zhangyiming/model/isoform/mouse_tissue.isoform", header = T)
+
+utr = readRDS("/mnt/data8/zhangyiming/model/rds/mm_utr.rds")
+markers$utr = sapply(markers$gene, function(x) { str_split(x, "_")[[1]][1] })
+markers$ats = sapply(markers$gene, function(x) { str_split(x, "_")[[1]][2] })
+markers = merge(markers, utr[, c("utr", "gene")], by = "utr")
+
+
+data= data.table::fread("/mnt/raid64/ATS/Personal/zhangyiming/model/filter/mouse_tissue.psi.gz")
+data = as.data.frame(data)
+rownames(data) <- data$V1
+data = data[, colnames(data) != "V1"]
+```
+
+
+```{R}
+obj@meta.data$group = paste(obj@meta.data$CellType, obj@meta.data$tissue, sep = "|")
+
+cell_colors = c()
+cell_colors[["c57bl6"]] = "#3caea3"
+cell_colors[["balbc"]] = "#f6d55c"
+cell_colors[["splenocyte"]] = "#7570B3"
+cell_colors[["pbmc"]] = "#D95F02"
+
+
+temp = as.data.frame(go[["Macrophage"]]@compareClusterResult)
+temp = temp[str_detect(temp$Description, "pri-miRNA"), ]
+temp = str_split(temp$geneID, "/")[[1]]
+
+plist_expr = list()
+for (i in temp) {
+  p = VlnPlot(obj, features = i, pt.size = 0, group.by = "group")
+  p = p$data[str_detect(p$data$ident, "Macrophage"), ]
+  p$ident = str_replace_all(p$ident, "^(\\w+)\\|", "")
+  
+  p = ggviolin(
+    p, x="ident", y=i, title = i, fill = "ident", palette = cell_colors,
+    add = "boxplot", add.params = list(fill = "white")
+  ) + 
+    stat_compare_means(comparisons = list(c("splenocyte", "pbmc")))
+  plist_expr[[i]] = p
+  # print(p)
+}
+
+plist_expr
+```
+
+
+```{r}
+library(reshape2)
+
+gene_ids = markers$gene.y
+names(gene_ids) = markers$gene.x
+
+mtx = data[markers$gene.x[markers$gene.y %in% temp & markers$cluster == "Macrophage" & markers$p_val_adj < 0.05 & markers$avg_logFC > .25], rownames(obj@meta.data)]
+mtx = melt(as.matrix(mtx))
+mtx = na.omit(mtx)
+mtx$CellType = obj@meta.data[as.character(mtx$Var2),  "CellType"]
+mtx$species = obj@meta.data[as.character(mtx$Var2),  "tissue"]
+mtx$gene = sapply(as.character(mtx$Var1), function(x) { gene_ids[[x]] })
+
+
+cell_colors = c()
+cell_colors[["c57bl6"]] = "#3caea3"
+cell_colors[["balbc"]] = "#f6d55c"
+cell_colors[["splenocyte"]] = "#7570B3"
+cell_colors[["pbmc"]] = "#D95F02"
+
+mtx = mtx[mtx$CellType ==  "Macrophage", ]
+
+for (i in unique(mtx$Var1)) {
+  p = ggboxplot(
+    mtx[mtx$Var1 == i, ], 
+    x="species", 
+    y="value", 
+    fill = "species",
+    xlab = "", ylab = "PSI",
+    palette = cell_colors,
+    title = unique(mtx$gene[mtx$Var1 == i]), 
+    subtitle = i,
+    legend = "none"
+  )  + 
+    stat_compare_means(comparisons = list(c("splenocyte", "pbmc")))
+  plist[[i]] = p
+  # print(p)
+}
+
+plist
+```
+
+
+```{R}
+obj@meta.data$group = paste(obj@meta.data$CellType, obj@meta.data$tissue, sep = "|")
+
+cell_colors = c()
+cell_colors[["c57bl6"]] = "#3caea3"
+cell_colors[["balbc"]] = "#f6d55c"
+cell_colors[["splenocyte"]] = "#7570B3"
+cell_colors[["pbmc"]] = "#D95F02"
+
+
+temp = as.data.frame(go[["B"]]@compareClusterResult)
+temp = temp[str_detect(temp$Description, "B cell differentiation"), ]
+temp = str_split(temp$geneID, "/")[[1]]
+
+
+for (i in temp) {
+  p = VlnPlot(obj, features = i, pt.size = 0, group.by = "group")
+  p = p$data[str_detect(p$data$ident, "B"), ]
+  p$ident = str_replace_all(p$ident, "^(\\w+)\\|", "")
+  
+  p = ggviolin(
+    p, x="ident", y=i, title = i, fill = "ident", palette = cell_colors,
+    add = "boxplot", add.params = list(fill = "white")
+  ) + 
+    stat_compare_means(comparisons = list(c("splenocyte", "pbmc")))
+  plist_expr[[i]] = p
+  # print(p)
+}
+```
+
+
+```{r}
+library(reshape2)
+
+gene_ids = markers$gene.y
+names(gene_ids) = markers$gene.x
+
+mtx = data[markers$gene.x[markers$gene.y %in% temp & markers$cluster == "B" & markers$p_val_adj < 0.05 & markers$avg_logFC > .25], rownames(obj@meta.data)]
+mtx = melt(as.matrix(mtx))
+mtx = na.omit(mtx)
+mtx$CellType = obj@meta.data[as.character(mtx$Var2),  "CellType"]
+mtx$species = obj@meta.data[as.character(mtx$Var2),  "tissue"]
+mtx$gene = sapply(as.character(mtx$Var1), function(x) { gene_ids[[x]] })
+
+
+cell_colors = c()
+cell_colors[["c57bl6"]] = "#3caea3"
+cell_colors[["balbc"]] = "#f6d55c"
+cell_colors[["splenocyte"]] = "#7570B3"
+cell_colors[["pbmc"]] = "#D95F02"
+
+mtx = mtx[mtx$CellType ==  "B", ]
+
+for (i in unique(mtx$Var1)) {
+  p = ggboxplot(
+    mtx[mtx$Var1 == i, ], 
+    x="species", 
+    y="value", 
+    fill = "species",
+    xlab = "", ylab = "PSI",
+    palette = cell_colors,
+    title = unique(mtx$gene[mtx$Var1 == i]), 
+    subtitle = i,
+    legend = "none"
+  ) + 
+    stat_compare_means(comparisons = list(c("splenocyte", "pbmc")))
+  plist[[i]] = p
+  # print(p)
+}
+
+plist
+
+```
+
+
+```{r}
+ggsave(
+  filename = "plots/mouse/go_expr_gene.pdf",
+  plot = cowplot::plot_grid(plotlist = plist_expr, ncol = 4),
+  width = 16, height = 18
+)
+
+
+ggsave(
+  filename = "plots/mouse/go_psi_gene.pdf",
+  plot = cowplot::plot_grid(plotlist = plist, ncol = 5),
+  width = 20, height = 18
+)
+```
+
+
+## create group list for 
+```{r}
+library(trqwe)
+library(stringr)
+obj <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/seurat/mouse_species_expr.rds")
+
+meta = obj@meta.data[obj@meta.data$CellType == "Neutrophil", ]
+
+temp = data.frame(
+  bam = meta$sample,
+  barcode = str_replace_all(meta$Cells, "-1.*$", "-1"),
+  cell = meta$species
+)
+
+write.table(
+  temp, "sashimi/source_lists/barcodes/mouse_neu_species.list", 
+  row.names = F, col.names = F, 
+  quote = F, sep = "\t"
+)
+
+
+write.table(
+  data.frame(
+    cell = c("c57bl6", "balbc"),
+    col = c("#3caea3", "#f6d55c")
+  ),
+  "sashimi/source_lists/barcodes/mouse_neu_species.color", 
+  row.names = F, col.names = F, 
+  quote = F, sep = "\t"
+)
+
+
+obj <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/seurat/mouse_tissue_expr.rds")
+
+meta = obj@meta.data[obj@meta.data$CellType == "Macrophage", ]
+
+temp = data.frame(
+  bam = meta$sample,
+  barcode = str_replace_all(meta$Cells, "-1.*$", "-1"),
+  cell = meta$tissue
+)
+
+write.table(
+  temp, "sashimi/source_lists/barcodes/mouse_mpp_tissue.list", 
+  row.names = F, col.names = F, 
+  quote = F, sep = "\t"
+)
+
+
+write.table(
+  data.frame(
+    cell = c("splenocyte", "pbmc"),
+    col = c("#7570B3", "#D95F02")
+  ),
+  "sashimi/source_lists/barcodes/mouse_mpp_tissue.color", 
+  row.names = F, col.names = F, 
+  quote = F, sep = "\t"
+)
+
+
+meta = obj@meta.data[obj@meta.data$CellType == "B", ]
+
+temp = data.frame(
+  bam = meta$sample,
+  barcode = str_replace_all(meta$Cells, "-1.*$", "-1"),
+  cell = meta$tissue
+)
+
+write.table(
+  temp, "sashimi/source_lists/barcodes/mouse_b_tissue.list", 
+  row.names = F, col.names = F, 
+  quote = F, sep = "\t"
+)
+
+write.table(
+  data.frame(
+    cell = c("splenocyte", "pbmc"),
+    col = c("#7570B3", "#D95F02")
+  ),
+  "sashimi/source_lists/barcodes/mouse_b_tissue.color", 
+  row.names = F, col.names = F, 
+  quote = F, sep = "\t"
+)
+```
+
+
+```{r fig.height=4, fig.width=6}
+obj <- mcreadRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/seurat/mm_expr.rds")
+
+meta = obj@meta.data
+
+meta$group = paste(meta$species, meta$tissue, sep = " | ")
+meta = meta[!str_detect(meta$group, "unknown"), ]
+
+temp = meta %>%
+  group_by(group, CellType) %>%
+  add_tally() %>%
+  dplyr::select(group, CellType, n) %>%
+  unique() %>%
+  group_by(group) %>%
+  mutate(p = n / sum(n) * 100) %>%
+  as.data.frame()
+
+
+temp$CellType = factor(temp$CellType, levels = cell_orders)
+
+p = ggline(temp, x="CellType", y="p", color = "group", xlab = "", ylab = "Faction of cells") + theme(axis.text.x = element_text(angle = 90, vjust = .5, hjust = 1))
+p
+ggsave(
+  filename = "plots/mouse/percenage.pdf", 
+  plot = p, width = 6, height = 4
+)
+```
+
+
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/markers/mouse_markers_celltype_expr.rds")
+markers_psi = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/markers/mouse_markers_celltype_psi.rds")
+
+markers = markers[abs(markers$avg_log2FC) > .25 & markers$p_val_adj < 0.05, ]
+markers$type = ifelse(markers$avg_log2FC > 0, "Up", "Down")
+
+table(markers$type)
+
+markers_psi = markers_psi[abs(markers_psi$avg_logFC) > .25 & markers_psi$p_val_adj < 0.05, ]
+markers_psi$type = ifelse(markers_psi$avg_logFC > 0, "Up", "Down")
+
+table(markers_psi$type)
+```
+
+
+
+## ATAC
+```{r}
+library(sparseMatrixUtils)
+peaks = read.table("/mnt/data8/zhangyiming/model/mouse/peak_promoter_intersections.txt", sep = "\t", header = T)
+
+data = readRDS("/mnt/data8/zhangyiming/model/mouse/atac_matrix.binary.qc_filtered.rds")
+meta = read.table("/mnt/data8/zhangyiming/model/mouse/cell_metadata.txt", sep = "\t", header = T)
+rownames(meta) <- meta$cell
+sdata = readRDS("/mnt/data8/zhangyiming/model/mouse/atac_matrix.tfidf.qc_filtered.rds")
+# sdata = sparseToDenseMatrix(sdata, chunk.size = 1000, cores = 10)
+# mcsaveRDS(sdata, "/mnt/data8/zhangyiming/model/mouse/atac_matrix.tfidf.qc_filtered.rds")
+
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/markers/mouse_markers_tissue_psi.rds")
+```
+
+
+### peaks seurat
+```{r}
+obj <- CreateSeuratObject(data, meta.data = meta)
+obj <- NormalizeData(obj)
+
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 2000)
+obj = ScaleData(obj)
+obj = RunPCA(obj)
+ElbowPlot(obj)
+
+n_pcs = 5
+obj <- FindNeighbors(obj, dims = 1:n_pcs)
+obj <- FindClusters(obj, resolution = .9) # seq(.5, .8, .1)
+obj <- RunUMAP(obj, dims = 1:n_pcs)
+
+
+cells = c("Activated B cells", "B cells", "Immature B cells", "T cells", "Dendritic cells", "Monocytes", "Macrophages")
+obj@meta.data$group = paste(obj@meta.data$tissue, obj@meta.data$cell_label, sep = "|")
+
+tissues = unique(obj@meta.data$tissue)
+
+temp = as.data.frame(table(obj@meta.data$group))
+temp = temp[temp$Freq > 3, ]
+
+comparisons = unlist(lapply(cells, function(x) { paste(tissues, x, sep = "|") }))
+comparisons = comparisons[comparisons %in% temp$Var1]
+
+
+registerDoMC(55)
+markers = foreach(i = comparisons, .combine = "rbind", .errorhandling = "pass") %dopar% {
+  cell = str_split(i, "\\|")[[1]][2]
+  j = str_split(i, "\\|")[[1]][1]
+  
+  gs = paste(tissues[tissues != j], cell, sep = "|")
+  gs = gs[gs %in% obj@meta.data$group]
+  
+  temp = FindMarkers(
+    obj, 
+    group.by = "group",
+    ident.1 = i,
+    ident.2 = gs
+  )
+  temp$tissue = j
+  temp$cell = cell
+  temp$gene = rownames(temp)
+  temp
+}
+
+# obj <- mcreadRDS("mouse/peaks.rds")
+
+saveRDS(markers, "mouse/markers_peaks.rds")
+mcsaveRDS(obj, "mouse/peaks.rds")
+
+write.table(markers, "mouse/markers_peaks.txt", sep = "\t", row.names = F, quote = F)
+```
+
+
+
+```{r}
+write.table(str_replace_all(rownames(data), "_", "\t"), "/mnt/data8/zhangyiming/model/mouse/all_peaks.mm9.bed", quote = F, row.names = F, col.names = F)
+write.table(markers, "/mnt/data8/zhangyiming/model/mouse/markers.txt", sep = "\t", quote = F, row.names = F, col.names = T)
+```
+
+
+### gene score
+```{r}
+library(sparseMatrixUtils)
+library(doMC)
+
+data = readRDS("/mnt/data8/zhangyiming/model/mouse/activity_scores.quantitative.rds")
+meta = read.table("/mnt/data8/zhangyiming/model/mouse/cell_metadata.txt", sep = "\t", header = T)
+rownames(meta) <- meta$cell
+sdata = readRDS("/mnt/data8/zhangyiming/model/mouse/activity_scores.binarized.rds")
+sdata = sparseToDenseMatrix(sdata, cores = 10)
+```
+
+
+### peaks seurat
+```{r}
+obj <- CreateSeuratObject(data, meta.data = meta)
+obj <- NormalizeData(obj)
+
+obj = FindVariableFeatures(obj, selection.method = "vst", nfeatures = 2000)
+obj = ScaleData(obj)
+# SetAssayData(obj, "scale.data", sdata)
+
+obj <- RunPCA(obj)
+ElbowPlot(obj)
+
+n_pcs = 5
+obj <- FindNeighbors(obj, dims = 1:n_pcs)
+obj <- FindClusters(obj, resolution = .9) # seq(.5, .8, .1)
+obj <- RunUMAP(obj, dims = 1:n_pcs)
+
+
+cells = c("Activated B cells", "B cells", "Immature B cells", "T cells", "Dendritic cells", "Monocytes", "Macrophages")
+obj@meta.data$group = paste(obj@meta.data$tissue, obj@meta.data$cell_label, sep = "|")
+
+tissues = unique(obj@meta.data$tissue)
+
+temp = as.data.frame(table(obj@meta.data$group))
+temp = temp[temp$Freq > 3, ]
+
+comparisons = unlist(lapply(cells, function(x) { paste(tissues, x, sep = "|") }))
+comparisons = comparisons[comparisons %in% temp$Var1]
+
+registerDoMC(55)
+markers = foreach(i = comparisons, .combine = "rbind", .errorhandling = "pass") %dopar% {
+  cell = str_split(i, "\\|")[[1]][2]
+  j = str_split(i, "\\|")[[1]][1]
+  
+  gs = paste(tissues[tissues != j], cell, sep = "|")
+  gs = gs[gs %in% obj@meta.data$group]
+  
+  temp = FindMarkers(
+    obj, 
+    group.by = "group",
+    ident.1 = i,
+    ident.2 = gs
+  )
+  temp$gene = rownames(temp)
+  temp$tissue = j
+  temp$cell = cell
+  temp
+}
+
+saveRDS(markers, "mouse/markers_geneScore.rds")
+
+# obj <- mcreadRDS("mouse/geneScore.rds")
+
+mcsaveRDS(obj, "mouse/geneScore.rds")
+
+```
+
+
+#### venn plots
+```{r}
+markers = readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/markers/mouse_markers_tissue_psi.rds")
+
+markers$avg_logFC[is.infinite(markers$avg_logFC) & markers$avg_logFC > 0] = 100
+markers$avg_logFC[is.infinite(markers$avg_logFC) & markers$avg_logFC < 0] = -100
+
+write.table(markers, "/mnt/raid64/ATS/Personal/zhangyiming/model/rds/markers/mouse_markers_tissue_psi.txt", row.names = F, quote = F, sep = "\t")
+
+
+markers = markers[markers$avg_log2FC > .25 & markers$p_val_adj < 0.05, ]
+
+
+markers1 = readRDS("/mnt/data8/zhangyiming/model/mouse/markers_peaks.rds")
+markers1 = markers1[markers1$avg_log2FC > .25 & markers1$p_val_adj < 0.05, ]
+
+markers1 = markers1[markers1$tissue == "Spleen", ]
+
+length(intersect(str_to_upper(markers$gene), markers1$gene))
+```
+
+
+```{r fig.height=6, fig.width=8}
+obj <- mcreadRDS("mouse/peaks.rds")
+markers = readRDS("/mnt/data8/zhangyiming/model/mouse/markers_peaks.rds")
+
+temp = markers[markers$cell == "Monocytes" & markers$avg_log2FC > 0.25 & markers$p_val_adj < 0.05, ]
+
+
+meta = obj@meta.data[obj@meta.data$cell_label == "Monocytes", ]
+
+set.seed(42)
+meta = meta %>%
+  group_by(tissue) %>%
+  sample_n(50, replace = T) %>%
+  unique()
+
+meta = meta[meta$tissue %in% c("BoneMarrow", "Liver", "Spleen", "Thymus"), ]
+
+mtx = obj@assays$RNA@counts[intersect(temp$gene, rownames(obj)), as.character(meta$cell)]
+
+# mtx = t(scale(t(as.matrix(mtx))))
+
+
+h = Heatmap(
+  as.matrix(mtx), name = "Expr",
+  use_raster = T,
+  cluster_rows = F,
+  cluster_columns = F,
+  show_row_names = F,
+  show_column_names = F,
+  # col = colorRamp2(c(-.5, 0, .5), c("purple", "black", "yellow")),
+  column_split = meta$tissue
+)
+
+draw(h)
+
+
+mono = subset(obj, cells = obj@meta.data$cell[obj@meta.data$cell_label == "Monocytes" & obj@meta.data$tissue %in% c("BoneMarrow", "Liver", "Spleen", "Thymus")])
+
+DotPlot(mono, features = head(temp$gene[order(temp$avg_log2FC, decreasing = T)]), group.by = "tissue") + theme(axis.text.x = element_text(angle = 90, hjust = 1, vjust = .5))
+```
+
+```{r fig.height=5, fig.width=6}
+markers = readRDS("/mnt/data8/zhangyiming/model/mouse/markers_peaks.rds")
+markers = markers[abs(markers$avg_log2FC) > .25 & markers$p_val_adj < 0.05, ]
+markers$type = ifelse(markers$avg_log2FC > 0, "Up", "Down")
+markers = markers[markers$tissue == "Spleen", ]
+
+markers = unique(markers[, c("gene", "type")])
+
+# markers = markers[markers$cell != "Dendritic cells", ]
+
+temp = markers %>%
+  group_by(tissue, cell) %>%
+  add_tally() %>%
+  dplyr::select(tissue, cell, type, n) %>%
+  unique()
+
+temp$type = factor(temp$type, levels = c("Up", "Down"))
+
+p = ggbarplot(
+  temp, x="cell", y="n", fill = "type", 
+  position = position_dodge2(),
+  ggtheme = theme_pubr(x.text.angle = 90),
+  ylab = "Number of peaks",
+  xlab = "", ncol = 1,
+  label = T
+) + scale_y_log10()
+
+p
+
+ggsave(
+  filename = "plots/mouse/atac_number_bar.pdf",
+  plot = p, height = 6, width = 5
+)
+```
+
+
+
+```{r}
+res = read.table("/mnt/data8/zhangyiming/model/mouse/closest/overall.txt", sep = "|")
+
+ggdensity(res[abs(res$V3) < 2000, ], x="V3")
+```
+
+```{r fig.height=4, fig.width=6}
+library(wesanderson)
+res = read.table("/mnt/data8/zhangyiming/model/mouse/closest/overall_polII.txt", sep = "|")
+res$type = "RNAP-II"
+
+res = na.omit(res)
+p1 = ggdensity(res[abs(res$V3) < 1000, ], x="V3", color = "type", xlab = "Distance to ATS (bp)", facet.by = "type", scales = "free", palette = "#E7C636")
+p1
+```
+
+```{r fig.height=3, fig.width=6}
+res = read.table("/mnt/data8/zhangyiming/model/mouse/closest/overall_spleen.txt", sep = "|")
+res$type = "Up"
+
+res1 = read.table("/mnt/data8/zhangyiming/model/mouse/closest/overall_pbmc.txt", sep = "|")
+res1$type = "Down"
+res = rbind(res, res1)
+
+res$source = "ATAC"
+
+res = na.omit(res)
+
+p2 = ggdensity(res[abs(res$V3) < 1000, ], x="V3", color = "type", xlab = "Distance to ATS (bp)", palette = c("Up"="#EF291B", "Down"="#6EADBC"), facet.by = "source")
+
+p2
+
+
+ggsave(
+  filename = "plots/mouse/distance_spleen_pbmc_peaks.pdf",
+  plot = cowplot::plot_grid(p1, p2, nrow = 1), width = 8, height = 3
+)
+```
+
+
+```{r}
+library(stringr)
+res = NULL
+for (i in list.files("/mnt/data8/zhangyiming/model/mouse/closest/", pattern = "*.txt", full.names = T)) {
+  if(str_detect(basename(i), "overall_")) {
+    if (str_detect(basename(i), "polII")) {
+      next
+    }
+    
+    cell = str_split(basename(i), "[_\\.]")[[1]][2]
+    print(cell)
+    
+    temp =  read.table(i, sep = "|")
+    temp$tissue = cell
+    
+    res = rbind(res, temp)
+  }
+}
+
+res = na.omit(res)
+
+ggdensity(res[abs(res$V3) < 300, ], x="V3", color = "tissue", facet.by = "tissue")
+```
+
+
+
+```{r}
+res = read.table("/mnt/data8/zhangyiming/model/mouse/closest/Monocyte_Monocytes_spleen.txt", sep = "|")
+
+ggdensity(res[abs(res$V3) < 2000, ], x="V3")
+```
+
+
+```{r}
+res = read.table("/mnt/data8/zhangyiming/model/mouse/closest/Macrophage_Macrophages_spleen.txt", sep = "|")
+
+ggdensity(res[abs(res$V3) < 2000, ], x="V3")
+```
+
+
+```{r}
+res = read.table("/mnt/data8/zhangyiming/model/mouse/closest/polII_wig.txt")
+```
+
+
+## TF
+```{r}
+go <- readRDS("/mnt/raid64/ATS/Personal/zhangyiming/model/rds/go/mouse_tissue_psi_vs_expr.rds")
+
+data = readRDS("/mnt/raid62/Personal_data/zhangdan/ATS/diff_marker/cor.res.filter.rds")
+
+
+temp = as.data.frame(go[["Macrophage"]]@compareClusterResult)
+temp = temp[str_detect(temp$Description, "myeloid leukocyte migration"), ]
+temp = str_split(temp$geneID, "/")[[1]]
+temp = data[data$sub1 %in% temp & data$cor.res > 0.7, ]
+
+
+c("Cxcl2",  "Ccl2",   "Rpl13a", "Trem1",  "Ccl3", 
+"Ccl4",  "Prtn3",  "Cxcl10", "Cxcl1",  "Rps19",
+"Ccr2",   "Dusp1",  "Pde4b",  "Sell",   "C5ar1", 
+"Ccl9",   "Lgals3", "Thbs1",  "Ccl6",   "Il1a",
+"Trem2",  "Ccr1",  "Anxa1",  "Il1b",  "Cd177",
+"Fcgr3",  "Itgam",  "Plcb1",  "Rac2",   "Trem3",
+"Mtus1")
+```
+
+
+```{r}
+data = readRDS("/mnt/raid62/Personal_data/zhangdan/ATS/seurat_markers/coreelation_res_combined.rds")
+
+temp = dcast(data[abs(data$cor.res) > .7, ], name~cell_type, value.var = "cor.res", fill = 0, fun.aggregate = mean)
+rownames(temp) <- temp$name
+temp = temp[, colnames(temp) != "name"]
+
+
+Heatmap(temp, name = "Corr", show_row_names = F)
+```
+
+
+```{r}
+data = readRDS("/mnt/raid62/Personal_data/zhangdan/ATS/seurat_markers/mouse_species_correlation.rds")
+data = do.call(rbind, data)
+
+temp = dcast(data[abs(data$cor.res) > .5, ], name~cell_type, value.var = "cor.res", fill = 0, fun.aggregate = mean)
+rownames(temp) <- temp$name
+temp = temp[, colnames(temp) != "name"]
+
+
+Heatmap(temp, name = "Corr", show_row_names = F)
+```
+
+
+```{r}
+data = readRDS("/mnt/raid62/Personal_data/zhangdan/ATS/seurat_markers/coreelation_res_combined2.rds")
+data = do.call(rbind, data)
+
+temp = dcast(data[abs(data$cor.res) > .5, ], name~cell_type, value.var = "cor.res", fill = 0, fun.aggregate = mean)
+rownames(temp) <- temp$name
+temp = temp[, colnames(temp) != "name"]
+
+
+Heatmap(temp, name = "Corr", show_row_names = F)
+```
+
+
 
 Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

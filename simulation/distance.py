@@ -3,13 +3,17 @@
 u"""
 Stats the distance between inferred sites and benckmarks
 """
-import matplotlib
+import matplotlib as mpl
+import matplotlib.font_manager
 
-matplotlib.use("Agg")
+mpl.use('Agg')
+mpl.rcParams['pdf.fonttype'] = 42
+
+if any(["Arial" in f.name for f in matplotlib.font_manager.fontManager.ttflist ]):
+    mpl.rcParams['font.family'] = 'Arial'
 
 import os
 
-import numpy as np
 import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
@@ -90,11 +94,14 @@ def main(tss, output: str, *files):
     df = pd.DataFrame(res)
 
     _, ax = plt.subplots(figsize=(12, 6))
-    sns.kdeplot(data = df, x="dist", hue="file", ax=ax)
-
-    for x in [-100, 100]:
-        ax.axvline(x=x, color='grey', linestyle='--')
-    plt.savefig(os.path.join(output, "dist.png"), dpi = 300)
+    sns.kdeplot(data = df, x="dist", hue="file", ax=ax, clip = [-5000, 5000])
+    ax.set_xticks(range(-5000, 5000, 500), minor=False)
+    ax.set_xticklabels(
+        range(-5000, 5000, 500), 
+        rotation=45, ha='right', 
+        rotation_mode='anchor'
+    )
+    plt.savefig(os.path.join(output, "dist.pdf"), dpi = 300)
 
 
 if __name__ == '__main__':

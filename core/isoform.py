@@ -641,7 +641,12 @@ class GTFUtils(object):
                     if rec.source == "gene":
                         if gene != rec:
                             if gene is not None:
-                                res.append(Coordinate(gene, transcripts))
+                                temp = Coordinate(gene, transcripts)
+                                if res and res[-1] & temp:
+                                    res[-1] += temp
+                                else:
+                                    res.append(temp)
+
                             gene = rec
                             transcripts = {}
 

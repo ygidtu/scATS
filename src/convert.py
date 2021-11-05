@@ -210,6 +210,33 @@ class Coordinate(object):
 
         self.barcodes = {}
 
+    @property
+    def chromosome(self):
+        return self.gene.chromosome
+    
+    @property
+    def start(self):
+        return self.gene.start
+
+    @property
+    def end(self):
+        return self.gene.end
+    
+    @property
+    def strand(self):
+        return self.gene.strand
+
+    def __and__(self, other):
+        return self.gene & other.gene
+
+    def __add__(self, other):
+        gene = self.gene + other.gene
+
+        isoforms = self.isoforms
+        isoforms.update(other.isoforms)
+
+        return Coordinate(gene, isoforms)
+
     def set_bams(self, bams: List[str]):
         u"""
         check input bam files
@@ -261,6 +288,10 @@ class Coordinate(object):
         relative = self.relative
         return [WinList([Window(x[1], x[2]) for x in relative if x[0] == i]) for i in range(len(self.ids) + 1)]
 
+    @property
+    def is_duplicate(self):
+        return self.gene.is_duplicate
+    
     def get(self, idx: int) -> Optional[str]:
         u"""
         get transcript id by index
@@ -340,7 +371,7 @@ class Coordinate(object):
             return WinList([Window.create(x) for x in res])
         return res
 
-    def assign(self, reads: Reads):
+    def assign(self, reads: Reads, utr_length: int = 500):
         u"""
         wether all reads parts locate in exons of same transcript
         :param reads: list of Reads
@@ -356,11 +387,19 @@ class Coordinate(object):
 
         # cast transcripts to Region
         transcripts = []
-        for i in self.relative:
+        for idx, i in enumerate(self.relative):
             if i[0] > 0:
+                st, en = i[1], i[2]
+
+                if idx == 0:
+                    st = max(st - utr_length // 2, 1)
+                
+                if idx == len(self.relative) - 1:
+                    en = en + utr_length // 2
+
                 transcripts.append(BED(
                     self.gene.chromosome,
-                    i[1], i[2],
+                    st, en,
                     self.gene.strand,
                     record_id=i[0],
                     name=i[0]
@@ -392,19 +431,32 @@ class Coordinate(object):
         return assigned
 
     def utr_per_transcript(self, span: int = 500):
+        utrs = []
         for iso, exons in self.isoforms.items():
-            exons = sorted(exons)
+            exons = sorted(exons, key=lambda x: [x.chromosome, x.start, x.end])
 
             site = exons[0].start if self.gene.strand == "+" else exons[-1].end
 
-            yield BED(
+            utrs.append(BED(
                 self.gene.chromosome,
-                site - span,
+                max(site - span, 1),
                 site + span,
                 self.gene.strand,
                 name=iso,
                 record_id=self.gene.gene_name
-            )
+            ))
+
+        res = []
+        curr_utr = utrs[0]
+
+        for i in utrs[1:]:
+            if curr_utr & i:
+                curr_utr =  curr_utr + i
+            else:
+                res.append(curr_utr)
+                curr_utr = i
+        res.append(curr_utr)
+        return res
 
 
 if __name__ == '__main__':

@@ -145,20 +145,19 @@ class ATSParams(object):
         Factory function to execute the ATS model and format results
         """
         gene = self.gtf[idx]
-        gene.set_bams(self.bam)
+        res = []
         utrs = []
         reads = {}
 
-        for idx, utr in enumerate(gene.utr_per_transcript(span=self.utr_length // 2)):
-            # skip redudant utrs while tolerance mode
-            if not strict and utr in utrs:
-                continue
+        if gene.is_duplicate:
+            return res
 
+        gene.set_bams(self.bam)
+
+        for idx, utr in enumerate(gene.utr_per_transcript(span=self.utr_length // 2)):
             utrs.append(utr)
 
-            total = 0
             for r1, r2 in gene.reads(utr, remove_duplicate_umi=self.remove_duplicate_umi):
-                total += 1
                 if strict:
                     assign = set(gene.assign(r1)) & set(gene.assign(r2))
 
@@ -172,18 +171,8 @@ class ATSParams(object):
                         reads[idx + 1] = []
                     reads[idx + 1].append([r1, r2])
             
-            # if utr.name in ['DDX11L1-202', 'DDX11L1-201']:
-            #     print(utr, total)
-
-            #     """
-            #     1       11619   12119   DDX11L1 DDX11L1-202     + 0
-            #     1       11760   12260   DDX11L1 DDX11L1-201     + 713
-            #     """
-
-        # total = 0
-        res = []
+        
         for idx, rds in reads.items():
-            # total += 1
             if len(rds) < self.min_reads:
                 continue
 
@@ -209,7 +198,7 @@ class ATSParams(object):
             except Exception as err:
                 if self.debug:
                     log.exception(err)
-        # print(gene.isoforms.keys(), total)
+
         return res
 
 
@@ -335,10 +324,7 @@ def ats(
     bams: List[str],
 ):
     u"""
-    Inference
-    \f
-
-    :param debug: enable debug mode
+    ATS Inference
     """
 
     init_logger("DEBUG" if debug else "INFO")
