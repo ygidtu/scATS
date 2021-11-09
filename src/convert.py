@@ -446,6 +446,7 @@ class Coordinate(object):
                 record_id=self.gene.gene_name
             ))
 
+        utrs = sorted(utrs, key=lambda x: [x.chromosome, x.start, x.end])
         res = []
         curr_utr = utrs[0]
 

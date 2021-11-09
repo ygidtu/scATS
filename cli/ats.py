@@ -6,6 +6,7 @@ Created at 2021.04.25 by Zhang
 Contians all the parameters and command line params handler
 """
 import os
+import sys
 from multiprocessing import Process, Queue, cpu_count
 from typing import List, Optional
 
@@ -156,6 +157,8 @@ class ATSParams(object):
 
         for idx, utr in enumerate(gene.utr_per_transcript(span=self.utr_length // 2)):
             utrs.append(utr)
+
+            reads[idx + 1] = []
 
             for r1, r2 in gene.reads(utr, remove_duplicate_umi=self.remove_duplicate_umi):
                 if strict:
@@ -334,26 +337,31 @@ def ats(
 
     log.info("ATS inference")
 
-    params = ATSParams(
-        gtf=gtf,
-        bam=bams,
-        n_max_ats=n_max_ats,
-        n_min_ats=n_min_ats,
-        min_ws=min_ws,
-        max_unif_ws=max_unif_ws,
-        max_beta=max_beta,
-        fixed_inference_flag=fixed_inference,
-        debug=debug,
-        remove_duplicate_umi=remove_duplicate_umi,
-        utr_length=utr_length,
-        min_reads=min_reads,
-    )
+    try:
+        params = ATSParams(
+            gtf=gtf,
+            bam=bams,
+            n_max_ats=n_max_ats,
+            n_min_ats=n_min_ats,
+            min_ws=min_ws,
+            max_unif_ws=max_unif_ws,
+            max_beta=max_beta,
+            fixed_inference_flag=fixed_inference,
+            debug=debug,
+            remove_duplicate_umi=remove_duplicate_umi,
+            utr_length=utr_length,
+            min_reads=min_reads,
+        )
+    except KeyboardInterrupt:
+        log.info("KeyboardInterrupt, Existing...")
+        sys.exit(0)
 
     # init queues
     input_queue = Queue()
     output_queue = Queue()
 
     # generate consumers
+    consumers = []
     for _ in range(processes):
         p = Process(
             target=consumer,
@@ -361,27 +369,33 @@ def ats(
         )
         p.daemon = True
         p.start()
+        consumers.append(p)
 
     # producer to assign task
     for i in range(len(params)):
         input_queue.put(i)
 
-    progress = custom_progress()
-    with progress:
-        task = progress.add_task("Computing...", total=len(params))
-        with open(output, "w+") as w:
-            header = '\t'.join(params.keys())
-            w.write(f"{header}\n")
+    try:
+        progress = custom_progress()
+        with progress:
+            task = progress.add_task("Computing...", total=len(params))
+            with open(output, "w+") as w:
+                header = '\t'.join(params.keys())
+                w.write(f"{header}\n")
 
-            while not progress.finished:
-                for res in output_queue.get(block=True, timeout=None):
-                    if res:
-                        w.write(f"{res}\n")
-                        w.flush()
+                while not progress.finished:
+                    for res in output_queue.get():
+                        if res:
+                            w.write(f"{res}\n")
+                            w.flush()
 
-                progress.update(task, advance=1)
+                    progress.update(task, advance=1)
 
-    log.info("DONE")
+        log.info("DONE")
+    except KeyboardInterrupt:
+        log.info("KeyboardInterrupt, Existing...")
+        [x.terminate() for x in consumers]
+        sys.exit(0)
 
 
 if __name__ == '__main__':

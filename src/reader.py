@@ -7,6 +7,7 @@ Preprocess of UTR bed and BAM, to get the data for model
 """
 import gzip
 import os
+import sys
 import random
 import re
 from typing import Dict, List
@@ -243,92 +244,93 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
 
         r = pysam.AlignmentFile(b) if isinstance(b, str) else b
 
+        # check the chromosome format
+        if region.chromosome not in r.references:
+            chromosome = region.chromosome.replace("chr", "") if region.chromosome.startswith("chr") else "chr" + region.chromosome
+
+            if chromosome not in r.references:
+                log.warn(f"{region.chromosome} or {chromosome} not present in bam file")
+                continue
+
+            region.chromosome = chromosome
+
         # fetch with until_eof is faster on large bam file according to
         # https://pysam.readthedocs.io/en/latest/faq.html
+        for rec in r.fetch(region.chromosome, region.start, region.end, until_eof=True):
+            if not rec.is_paired:
+                not_paired = True
 
-        iterator = None
-        try:
-            iterator = r.fetch(region.chromosome, region.start, region.end, until_eof=True)
-        except ValueError as err:
+            if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
+                continue
             
-            if region.chromosome.startswith("chr"):
-                region.chromosome = region.chromosome.replace("chr", "")
+            if __get_strand__(rec) != region.strand:
+                continue
+
+            # only use the required barcodes for analysis
+            if barcode.get(b):
+                if not __is_barcode_exists__(barcode[b], rec):
+                    continue
+            
+            # filter duplicate umi
+            if remove_duplicate_umi:
+                if not rec.has_tag("UB") or rec.get_tag("UB") in umis:
+                    continue
+                umis.add(rec.get_tag("UB"))
+
+            if rec.is_read1:
+                r1s.append(rec)
             else:
-                region.chromosome = "chr" + region.chromosome
+                r2s.append(rec)
 
-            try:
-                iterator = r.fetch(region.chromosome, region.start, region.end, until_eof=True)
-            except ValueError as err:
-                log.warn(err)
+        if isinstance(b, str):
+            r.close()
 
-        if iterator:
-            for rec in iterator:
-                if not rec.is_paired:
-                    not_paired = True
+        if not_paired:
+            for r in r1s:
+                r = Reads.create(r, single_end = True)
+                if r:
+                    yield r, None
 
-                if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
-                    continue
-                
-                if __get_strand__(rec) != region.strand:
-                    continue
+            for r in r2s:
+                r = Reads.create(r, single_end = True)
+                if r:
+                    yield r, None
 
-                # only use the required barcodes for analysis
-                if barcode.get(b):
-                    if not __is_barcode_exists__(barcode[b], rec):
-                        continue
-                
-                # filter duplicate umi
-                if remove_duplicate_umi:
-                    if not rec.has_tag("UB") or rec.get_tag("UB") in umis:
-                        continue
-                    umis.add(rec.get_tag("UB"))
+            return
 
-                if rec.is_read1:
-                    r1s.append(rec)
-                else:
-                    r2s.append(rec)
+        r1s = sorted(r1s, key=lambda x: x.query_name)
+        r2s = sorted(r2s, key=lambda x: x.query_name)
 
-            if isinstance(b, str):
-                r.close()
+        i, j = 0, 0
+        while i < len(r1s) and j < len(r2s):
+            r1 = r1s[i]
+            r2 = r2s[j]
 
-            if not_paired:
-                for r in r1s:
-                    r = Reads.create(r, single_end = True)
-                    if r:
-                        yield r, None
+            if r1.query_name < r2.query_name:
+                i += 1
+            elif r1.query_name > r2.query_name:
+                j += 1
+            else:
+                r1 = Reads.create(r1)
+                r2 = Reads.create(r2)
+                if r1 and r2 and region.is_cover(r1, 0) and region.is_cover(r2, 0):
+                    yield r1, r2
 
-                for r in r2s:
-                    r = Reads.create(r, single_end = True)
-                    if r:
-                        yield r, None
-
-                return
-
-            r1s = sorted(r1s, key=lambda x: x.query_name)
-            r2s = sorted(r2s, key=lambda x: x.query_name)
-
-            i, j = 0, 0
-            while i < len(r1s) and j < len(r2s):
-                r1 = r1s[i]
-                r2 = r2s[j]
-
-                if r1.query_name < r2.query_name:
-                    i += 1
-                elif r1.query_name > r2.query_name:
-                    j += 1
-                else:
-                    r1 = Reads.create(r1)
-                    r2 = Reads.create(r2)
-                    if r1 and r2 and region.is_cover(r1, 0) and region.is_cover(r2, 0):
-                        yield r1, r2
-
-                    i += 1
+                i += 1
 
 
 def check_bam(path: str) -> bool:
     try:
-        with pysam.AlignmentFile(path) as r:
+        with pysam.AlignmentFile(path, require_index = True) as r:
             pass
+    except IOError as err:
+        log.info(f"try to create index for {path}")
+
+        try:
+            pysam.index(path)
+        except Exception as err:
+            log.error(err)
+            sys.exit(err)
     except Exception as err:
         return False
     return True

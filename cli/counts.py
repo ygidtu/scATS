@@ -8,7 +8,7 @@ Functions used to count ats and calculate psi
 import click
 from multiprocessing import cpu_count
 
-from core.counts import count, psi
+from core import counts
 
 
 @click.command()
@@ -72,8 +72,8 @@ def count(
     c = f"{output}.count.gz" if compress else f"{output}.count"
     p = f"{output}.psi.gz" if compress else f"{output}.psi"
 
-    count(bams, ats = ats, output = c, processes = processes, bulk = bulk)
-    psi(c, p)
+    counts.counts(bams, ats = ats, output = c, processes = processes, bulk = bulk)
+    counts.psi(c, p)
 
 
 if __name__ == '__main__':

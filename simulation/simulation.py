@@ -42,6 +42,17 @@ MIN_READS = 50
 READS_LEN = 150
 
 
+def __decode_attr__(attrs):
+    data = {}
+    for line in attrs.split(";"):
+        if line:
+            key, val = line.split(' "')
+            key = re.sub(r'[";\s]', '', key)
+            val = re.sub(r'[";\s]', '', val)
+            data[key] = val
+    return data
+
+
 def generate_tss(gtf, bed, total=None):
     count = 0
     data = []
@@ -60,7 +71,12 @@ def generate_tss(gtf, bed, total=None):
                     site = [site, site + 1 if line[6] == "+" else site - 1]
                     site = sorted(site)
 
-                    line = f"{line[0]}\t{site[0]}\t{site[1]}\t{line[17]}_{line[23]}\t{count}\t{line[6]}\n".replace(
+                    attrs = __decode_attr__(" ".join(line[8:]))
+
+                    gn = attrs.get("gene_name", attrs.get("Parent"))
+                    tn = attrs.get("transcript_name", attrs.get("Name"))
+
+                    line = f"{line[0]}\t{site[0]}\t{site[1]}\t{gn}_{tn}\t{count}\t{line[6]}\n".replace(
                         '"', '').replace(";", '')
 
                     site = f"{line[0]}\t{site[0]}\t{site[1]}\t{line[6]}"
@@ -95,13 +111,17 @@ def generate_reads_length(
 def generate_normal_reads(
     K=50, mu=1000, seed=42,
     len_mu_base=250, len_mu_rand=100,
-    len_sd_base=20, len_sd_rand=20
+    len_sd_base=20, len_sd_rand=20,
+    strand = "+"
 ):
     random.seed(seed)
     sigma = random.choices(range(30, 50, 5), k=1)
 
     np.random.seed(seed)
     r1_arr = np.random.normal(mu, sigma, K)
+
+    if strand != "+":
+        r1_arr -= READS_LEN
 
     length = generate_reads_length(
         K, seed=seed,
@@ -111,7 +131,7 @@ def generate_normal_reads(
         len_sd_rand=len_sd_rand
     )
 
-    r2_arr = r1_arr + [x // 2 if x < 300 else x - 150 for x in length]
+    r2_arr = r1_arr + [x // 2 if x < READS_LEN * 2 else x - READS_LEN for x in length]
 
     r1_arr = r1_arr.astype(int)
     r2_arr = r2_arr.astype(int)
@@ -122,7 +142,8 @@ def generate_normal_reads(
 def generate_uniform_reads(
     K=50, seed=42, mu=1000,
     len_mu_base=250, len_mu_rand=100,
-    len_sd_base=20, len_sd_rand=20
+    len_sd_base=20, len_sd_rand=20, 
+    strand = "+"
 ):
     length = generate_reads_length(
         K, seed=seed,
@@ -134,6 +155,10 @@ def generate_uniform_reads(
 
     np.random.seed(seed)
     r1_arr = np.random.uniform(mu - length, mu + length)
+
+    if strand != "+":
+        r1_arr -= READS_LEN
+
     r2_arr = r1_arr + length
 
     r1_arr = r1_arr.astype(int)
@@ -145,7 +170,8 @@ def generate_uniform_reads(
 def generate_reads(
     K=50, seed=42, mu=1000,
     len_mu_base=250, len_mu_rand=100,
-    len_sd_base=20, len_sd_rand=20
+    len_sd_base=20, len_sd_rand=20,
+    strand = "+"
 ):
 
     num_of_noise = int(K * NOISE_WS)
@@ -155,14 +181,16 @@ def generate_reads(
         len_mu_base=len_mu_base,
         len_mu_rand=len_mu_rand,
         len_sd_base=len_sd_base,
-        len_sd_rand=len_sd_rand
+        len_sd_rand=len_sd_rand,
+        strand = strand
     )
     noise1_arr, noise2_arr = generate_uniform_reads(
         num_of_noise, seed=seed, mu=mu,
         len_mu_base=len_mu_base,
         len_mu_rand=len_mu_rand,
         len_sd_base=len_sd_base,
-        len_sd_rand=len_sd_rand
+        len_sd_rand=len_sd_rand,
+        strand = strand
     )
 
     return sorted(r1_arr + noise1_arr), sorted(r2_arr + noise2_arr)
@@ -212,7 +240,8 @@ def consumer(inQueue, outQueue, ref_ids):
         r1_arr, r2_arr = generate_reads(
             K=np.random.randint(MIN_READS, MAX_READS),
             seed=int(seed),
-            mu=int(st) if strand == "+" else int(en)
+            mu=int(st) if strand == "+" else int(en),
+            strand = strand
         )
 
         reads = []

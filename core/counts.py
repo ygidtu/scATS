@@ -83,7 +83,7 @@ def count_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: Queue
 
         res = {}
         for r in regions:
-            row_id = f"{utr.to_str()}_{r.to_str()}" if not gtf else f"{utr}-{r.name}"
+            row_id = f"{utr}_{r.to_str()}" if not gtf else f"{utr}-{r.name}"
 
             if row_id not in res.keys():
                 res[row_id] = {}
@@ -110,7 +110,7 @@ def count_bulk_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: 
 
         res = {}
         for r in regions:
-            row_id = f"{utr.to_str()}_{r.to_str()}" if not gtf else f"{utr}-{r.name}"
+            row_id = f"{utr}_{r.to_str()}" if not gtf else f"{utr}-{r.name}"
 
             if row_id not in res.keys():
                 res[row_id] = {}
@@ -121,7 +121,7 @@ def count_bulk_consumer(bam_files: List[Bam], input_queue: Queue, output_queue: 
         output_queue.put(res)
 
 
-def count(bams: Dict, output: str, ats: str, processes: int = 1, bulk: bool = False) :
+def counts(bams: Dict, output: str, ats: str, processes: int = 1, bulk: bool = False) :
     u"""
     count 
     """
