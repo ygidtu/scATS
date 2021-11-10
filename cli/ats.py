@@ -141,7 +141,7 @@ class ATSParams(object):
         ]
         return "\t".join(data)
 
-    def run(self, idx: int, strict: bool = False) -> List:
+    def run(self, idx: int) -> List:
         u"""
         Factory function to execute the ATS model and format results
         """
@@ -158,23 +158,12 @@ class ATSParams(object):
         for idx, utr in enumerate(gene.utr_per_transcript(span=self.utr_length // 2)):
             utrs.append(utr)
 
-            reads[idx + 1] = []
+            if (idx + 1) not in reads.keys():
+                reads[idx + 1] = []
 
             for r1, r2 in gene.reads(utr, remove_duplicate_umi=self.remove_duplicate_umi):
-                if strict:
-                    assign = set(gene.assign(r1)) & set(gene.assign(r2))
-
-                    for a in assign:
-                        if a not in reads:
-                            reads[a] = []
-
-                        reads[a].append([r1, r2])
-                else:
-                    if (idx + 1) not in reads.keys():
-                        reads[idx + 1] = []
-                    reads[idx + 1].append([r1, r2])
+                reads[idx + 1].append([r1, r2])
             
-        
         for idx, rds in reads.items():
             if len(rds) < self.min_reads:
                 continue
@@ -205,7 +194,7 @@ class ATSParams(object):
         return res
 
 
-def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams, strict: bool):
+def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams):
     u"""
     Multiprocessing consumer to perform the ATS core function
     :param input_queue: multiprocessing.Queue to get the index
@@ -219,7 +208,7 @@ def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams, strict:
         if gene is None:
             break
 
-        output_queue.put(params.run(gene, strict=strict))
+        output_queue.put(params.run(gene))
 
 
 @click.command()
@@ -302,12 +291,6 @@ def consumer(input_queue: Queue, output_queue: Queue, params: ATSParams, strict:
     type=click.BOOL,
     help=""" Only kept reads with different UMIs for ATS inference. """
 )
-@click.option(
-    "--strict",
-    is_flag=True,
-    type=click.BOOL,
-    help=""" Only kept reads with different UMIs for ATS inference. """
-)
 @click.argument("bams", nargs=-1, type=click.Path(exists=True), required=True)
 def ats(
     gtf: str,
@@ -323,7 +306,6 @@ def ats(
     processes: int,
     debug: bool,
     remove_duplicate_umi: bool,
-    strict: bool,
     bams: List[str],
 ):
     u"""
@@ -365,7 +347,7 @@ def ats(
     for _ in range(processes):
         p = Process(
             target=consumer,
-            args=(input_queue, output_queue, params, strict, )
+            args=(input_queue, output_queue, params, )
         )
         p.daemon = True
         p.start()

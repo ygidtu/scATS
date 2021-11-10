@@ -624,6 +624,7 @@ class GTFUtils(object):
         # read gtf
         progress = custom_progress(io = True)
         res = []
+        plus, minus = [], []
         gene = None
         transcripts = {}
         with progress:
@@ -641,12 +642,10 @@ class GTFUtils(object):
                     if rec.source == "gene":
                         if gene != rec:
                             if gene is not None:
-                                temp = Coordinate(gene, transcripts)
-                                if res and res[-1] & temp:
-                                    res[-1] += temp
+                                if rec.strand == "+":
+                                    plus.append(Coordinate(gene, transcripts))
                                 else:
-                                    res.append(temp)
-
+                                    minus.append(Coordinate(gene, transcripts))
                             gene = rec
                             transcripts = {}
 
@@ -660,8 +659,22 @@ class GTFUtils(object):
 
                         transcripts[rec.transcript_name].append(rec)
 
-                    
-        return res
+        # merge gene regions for further filtering
+        for temp in [plus, minus]:
+            temp = sorted(temp, key=lambda x: [x.chromosome, x.start, x.end])
+            
+            if not temp:
+                continue
+
+            curr = temp[0]
+            for i in temp[1:]:
+                if curr & i:
+                    curr += i
+                else:
+                    res.append(curr)
+            res.append(curr)
+
+        return sorted(res, key=lambda x: [x.chromosome, x.start, x.end])
 
 
 if __name__ == '__main__':
