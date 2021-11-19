@@ -66,6 +66,10 @@ function load_bed(input_file::String)
             
             temp = Dict(x => y for (x, y) in zip(header, line))
 
+            if occursin(",",  temp["gene_name"])
+                continue
+            end
+
             site = split(temp["utr"], r"[:-]")
 
             strand = site[length(site)]
@@ -107,11 +111,6 @@ function main(input_file::String, bam::String, output::String)
 
     bam_list = Bam.prepare_bam_list(bam)
 
-    key = basename(dirname(dirname(bam)))
-    key = split(string(key), "-")[1]
-
-    # bam = joinpath("/mnt/raid64/Covid19_Gravida/apamix/bam", string(key, ".bam"))
-
     output = absolute(Path(output))
     out_dir = parent(output)
     try
@@ -122,44 +121,116 @@ function main(input_file::String, bam::String, output::String)
         error(logger, Formatting.format(FormatExpr("Error while create {}: {}"), output, e))
         exit(1)
     end
-    output = string(output)
 
-    open(output, "w+") do w
-        stream = nothing
+    temp = Path(string(output, ".temp"))
+    done = joinpath(temp, "COUNTING_DONE")
 
-        if endswith(output, ".gz")
-            stream = ZlibDeflateOutputStream(w)
+    # counts reads
+    if !exists(done)
+        if exists(temp)
+            rm(temp, recursive=true)
         end
+    
+        mkdir(Path(temp), recursive=true)
+        
+        p = Progress(length(beds), 1, "Counting...")
+        Threads.@threads for b = beds
+            res = Bam.count_reads(bam_list, b)
 
-        p = Progress(length(beds), 1, "Computing...")
-        Threads.@threads for i = eachindex(beds)
-            b = beds[i]
-            res = Bam.reads(bam_list, b)
-
-            for (key, value) in res
-                if value > 0
-                    write(isnothing(stream) ? w : stream, string(Genomic.get_bed_key(b), "\t", key, "\t", value, "\n"))
+            open(joinpath(temp, b.Name), "a+") do w
+                stream = ZlibDeflateOutputStream(w)
+                
+                for (key, value) in res
+                    if value > 0
+                        write(stream, string(Genomic.get_bed_key(b), "\t", key, "\t", value, "\n"))
+                    end
                 end
+                
+                close(stream)
+                close(w)
             end
+        
             next!(p)
+        end
 
-            b = nothing
-            res = nothing
+        # Add Progress log
+        open(done, "w+") do w
+            write(w, "DONE")
+            close(w)
+        end
+    end
+
+    # merging results and calculate PSI
+    fs = readdir(temp)
+    p = Progress(length(fs), 1, "PSI...")
+
+    wc = open(string(output, ".count.gz"), "w+")
+    wp = open(string(output, ".psi.gz"), "w+")
+
+    sc = ZlibDeflateOutputStream(wc)
+    sp = ZlibDeflateOutputStream(wp)
+
+    l = ReentrantLock()
+    Threads.@threads for f = fs
+
+        if string(f) == filename(done)
+            continue
+        end
+        
+        counts = Vector{String}()
+        data = Dict{String, Dict{String, Int}}()
+        sums = Dict{String, Int}()
+
+        for line in eachline(open(joinpath(temp, f)) |> ZlibInflateInputStream)
+            line = strip(line)
+            push!(counts, line)
+            line = split(line, "\t")
+            if length(line) != 3
+                continue
+            end
             
-            # GC.safepoint()
+            # log the counts of ATS
+            if !haskey(data, line[1])
+                data[line[1]] = Dict()
+            end
+            data[line[1]][line[2]] = parse(Int, line[3])
 
-            # if i % 100 ==  0
-            #     GC.gc()
-            # end
+            # log the sum of ATS
+            sums[line[2]] = get(sums, line[2], 0) + parse(Int, line[3])
         end
 
-        if !isnothing(stream)
-            close(stream)
+        lock(l)
+        for i in counts
+            write(sc, string(i, "\n"))
         end
 
-        close(w)
+        # save psi
+        for (ats, barcodes) in data
+            for (bc, val) in barcodes
+                write(sp, string(ats, "\t", bc, "\t", val / sums[bc], "\n"))
+            end
+        end
+        unlock(l)
+        next!(p)
+    end
+
+    close(sc)
+    close(sp)
+    close(wc)
+    close(wp)
+
+    if exists(temp)
+        FilePathsBase.rm(temp, recursive=true, force = true)
     end
 end
 
-
-main(args["input"], args["bam"], args["output"])
+ccall(:jl_exit_on_sigint, Nothing, (Cint,), 0)
+# main(args["input"], args["bam"], args["output"])
+try
+    main(args["input"], args["bam"], args["output"])
+catch ex
+    println(ex)
+    if isa(ex, InterruptException)
+        info(LOGGER, "caught keyboard interrupt")
+    end
+end

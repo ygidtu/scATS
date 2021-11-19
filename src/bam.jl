@@ -52,7 +52,7 @@ module Bam
                 ))
             end
 
-            alias = basename(line[1])
+            alias = ""
             if length(line) > 1
                 alias = line[2]
             end
@@ -124,10 +124,9 @@ module Bam
         if bulk
             return true
         end
-
+    
         return haskey(auxdata, "CB") && haskey(auxdata, "UB")
     end
-    
     
     function determine_strand(record)::String
         strand = "*"
@@ -147,10 +146,10 @@ module Bam
         end
         return strand
     end
-
-    function reads(bam_list::Vector, region, cell_tag::String="CB", umi_tag::String="UB")::Dict{String, Int}
+    
+    function count_reads(bam_list::Vector, region, cell_tag::String="CB", umi_tag::String="UB")::Dict{String, Int}
         res = Dict() 
-
+    
         for bam in bam_list
             reader = open(BAM.Reader, bam.path, index=string(bam.path, ".bai"))
             for record in eachoverlap(reader, region.Chrom, region.Start:region.End)
@@ -169,9 +168,12 @@ module Bam
                     auxdata = Dict(BAM.auxdata(record))
                     cb = auxdata[cell_tag]
                     ub = auxdata[umi_tag]
-
+    
                     if check_barcode(bam, cb)
-                        cb = string(bam.alias, "_", cb)
+                        if bam.alias != ""
+                            cb = string(bam.alias, "_", cb)
+                        end
+
                         if !haskey(res, cb)
                             res[cb] = Dict()
                         end
@@ -184,7 +186,7 @@ module Bam
         return Dict(x => length(y) for (x, y) = res)
     end
 
-    function reads_bulk(bam_list::Vector, region)::Dict{String, Int}
+    function count_bulk(bam_list::Vector, region)::Dict{String, Int}
 
         res = Dict()
         for bam in bam_list
