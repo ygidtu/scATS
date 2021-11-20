@@ -20,6 +20,7 @@ using StatsBase
 include(joinpath(@__DIR__, "src", "bam.jl"))
 include(joinpath(@__DIR__, "src", "genomic.jl"))
 
+logger = Memento.config!("info"; fmt="[{date} - {level} | {name}]: {msg}")
 
 function parse_commandline()
     s = ArgParseSettings()
@@ -45,8 +46,8 @@ end
 args = parse_commandline()
 
 
-function load_bed(input_file::String)
-    beds = []  # Dict{String, Vector}()
+function load_bed(input_file::String)::Vector
+    beds = Vector()
 
     header = nothing
     open(input_file, "r") do r
@@ -56,7 +57,7 @@ function load_bed(input_file::String)
         seekstart(r)
         p = Progress(fileSize, 1)   # minimum update interval: 1 second
         while !eof(r)
-
+            update!(p, position(r))
             line = split(strip(readline(r)), "\t")
 
             if isnothing(header)
@@ -79,7 +80,7 @@ function load_bed(input_file::String)
 
             chrom, start_pos, end_pos = site[1], parse(Int, site[2]), parse(Int, site[3])
             alpha = split(get(temp, "inferred_site", get(temp, "infered_sites", "")), ",")
-
+  
             if length(alpha) > 0
                 try
                     for x = alpha
@@ -94,6 +95,7 @@ function load_bed(input_file::String)
                         end
                     end
                 catch e
+                    error(logger, e)
                 end
             end
 
@@ -109,7 +111,17 @@ end
 function main(input_file::String, bam::String, output::String)
     beds = load_bed(input_file)
 
+    if length(beds) < 1
+        info(logger, "There is no region needs to counts")
+        exit(0)
+    end
+
     bam_list = Bam.prepare_bam_list(bam)
+
+    if length(bam_list) < 1
+        info(logger, "There is no bam file")
+        exit(0)
+    end
 
     output = absolute(Path(output))
     out_dir = parent(output)
@@ -125,41 +137,51 @@ function main(input_file::String, bam::String, output::String)
     temp = Path(string(output, ".temp"))
     done = joinpath(temp, "COUNTING_DONE")
 
-    # counts reads
-    if !exists(done)
-        if exists(temp)
-            rm(temp, recursive=true)
-        end
-    
-        mkdir(Path(temp), recursive=true)
-        
-        p = Progress(length(beds), 1, "Counting...")
-        Threads.@threads for b = beds
-            res = Bam.count_reads(bam_list, b)
-
-            open(joinpath(temp, b.Name), "a+") do w
-                stream = ZlibDeflateOutputStream(w)
-                
-                for (key, value) in res
-                    if value > 0
-                        write(stream, string(Genomic.get_bed_key(b), "\t", key, "\t", value, "\n"))
-                    end
-                end
-                
-                close(stream)
-                close(w)
-            end
-        
-            next!(p)
-        end
-
-        # Add Progress log
-        open(done, "w+") do w
-            write(w, "DONE")
-            close(w)
+    # log the count progress
+    progress = Dict{String, Int}()
+    if exists(done)
+        for line in eachline(open(done))
+            progress[strip(line)] = 0
         end
     end
 
+    l = ReentrantLock()
+
+    if !exists(temp)
+        mkdir(Path(temp), recursive=true)
+    end
+
+    # Counting by multi-threads
+    p = Progress(length(beds), 1, "Counting...")
+    open(done, "w+") do w
+        Threads.@threads for b = beds
+            if !haskey(progress, b.Name)
+                res = Bam.count_reads(bam_list, b)
+
+                open(joinpath(temp, b.Name), "a+") do w1
+                    stream = ZlibDeflateOutputStream(w1)
+                    
+                    for (key, value) in res
+                        if value > 0
+                            write(stream, string(Genomic.get_bed_key(b), "\t", key, "\t", value, "\n"))
+                        end
+                    end
+                    
+                    close(stream)
+                    close(w1)
+                end
+            end
+
+            lock(l)
+            write(w, string(b.Name, "\n"))
+            flush(w)
+            unlock(l)
+        
+            next!(p)
+        end
+    close(w)
+    end
+   
     # merging results and calculate PSI
     fs = readdir(temp)
     p = Progress(length(fs), 1, "PSI...")
@@ -170,7 +192,6 @@ function main(input_file::String, bam::String, output::String)
     sc = ZlibDeflateOutputStream(wc)
     sp = ZlibDeflateOutputStream(wp)
 
-    l = ReentrantLock()
     Threads.@threads for f = fs
 
         if string(f) == filename(done)
@@ -224,6 +245,7 @@ function main(input_file::String, bam::String, output::String)
     end
 end
 
+
 ccall(:jl_exit_on_sigint, Nothing, (Cint,), 0)
 # main(args["input"], args["bam"], args["output"])
 try
@@ -231,6 +253,6 @@ try
 catch ex
     println(ex)
     if isa(ex, InterruptException)
-        info(LOGGER, "caught keyboard interrupt")
+        info(logger, "caught keyboard interrupt")
     end
 end
