@@ -147,8 +147,8 @@ module Bam
         return strand
     end
     
-    function count_reads(bam_list::Vector, region, cell_tag::String="CB", umi_tag::String="UB")::Dict{String, Int}
-        res = Dict() 
+    function count_reads(bam_list::Vector, region, cell_tag::String="CB", umi_tag::String="UB")::Dict{Int, Dict{String, Int}}
+        res = Dict()
     
         for bam in bam_list
             reader = open(BAM.Reader, bam.path, index=string(bam.path, ".bai"))
@@ -174,16 +174,27 @@ module Bam
                             cb = string(bam.alias, "_", cb)
                         end
 
-                        if !haskey(res, cb)
-                            res[cb] = Dict()
+                        for i = region.Start:region.End
+                            if !haskey(res, i)
+                                res[i] = Dict()
+                            end
+
+                            if !haskey(res[i], cb)
+                                res[i][cb] = Dict()
+                            end
+                
+                            res[i][cb][ub] = get(res[i][cb], ub, 0) + 1
                         end
-            
-                        res[cb][ub] = get(res[cb], ub, 0) + 1
                     end
                 end
             end
         end
-        return Dict(x => length(y) for (x, y) = res)
+
+        data = Dict()
+        for (i, counts) = res
+            data[i] = Dict(x => length(y) for (x, y) = counts)
+        end
+        return data
     end
 
     function count_bulk(bam_list::Vector, region)::Dict{String, Int}

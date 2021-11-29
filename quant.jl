@@ -9,7 +9,7 @@ using ArgParse
 using BioAlignments
 using FilePathsBase
 using GenomicFeatures
-using Libz
+using CodecZlib
 using Memento
 using ProgressMeter
 using XAM
@@ -46,8 +46,8 @@ end
 args = parse_commandline()
 
 
-function load_bed(input_file::String)::Vector
-    beds = Vector()
+function load_bed(input_file::String)::Dict{String, Vector{Vector}}
+    beds = Dict()
 
     header = nothing
     open(input_file, "r") do r
@@ -68,6 +68,7 @@ function load_bed(input_file::String)::Vector
             temp = Dict(x => y for (x, y) in zip(header, line))
 
             if occursin(",",  temp["gene_name"])
+                update!(p, position(r))
                 continue
             end
 
@@ -83,17 +84,25 @@ function load_bed(input_file::String)::Vector
   
             if length(alpha) > 0
                 try
+                    if !haskey(beds, temp["gene_name"])
+                        beds[temp["gene_name"]] = Vector()
+                    end
+
+                    sites = Vector()
+
                     for x = alpha
                         if x != ""
                             s = round(Int, parse(Float64, x))
                             
                             if strand == "+"
-                                push!(beds, Genomic.BED(chrom, s, s + 1, temp["gene_name"], string(length(beds) + 1), strand))
+                                push!(sites, Genomic.BED(chrom, s, s + 1, temp["gene_name"], string(length(beds) + 1), strand))
                             else
-                                push!(beds, Genomic.BED(chrom, s - 1, s, temp["gene_name"], string(length(beds) + 1), strand))
+                                push!(sites, Genomic.BED(chrom, s - 1, s, temp["gene_name"], string(length(beds) + 1), strand))
                             end
                         end
                     end
+
+                    push!(beds[temp["gene_name"]], sites)
                 catch e
                     error(logger, e)
                 end
@@ -105,6 +114,18 @@ function load_bed(input_file::String)::Vector
     end
 
     return beds
+end
+
+
+function generate_region_by_vec_of_regions(regions::Vector)
+    regions = sort(regions)
+
+    return Genomic.BED(
+        regions[1].Chrom, 
+        regions[1].Start - 1, 
+        regions[length(regions)].End + 1, 
+        "", "", regions[1].Strand
+    )
 end
 
 
@@ -134,115 +155,87 @@ function main(input_file::String, bam::String, output::String)
         exit(1)
     end
 
-    temp = Path(string(output, ".temp"))
-    done = joinpath(temp, "COUNTING_DONE")
-
-    # log the count progress
-    progress = Dict{String, Int}()
-    if exists(done)
-        for line in eachline(open(done))
-            progress[strip(line)] = 0
-        end
-    end
-
     l = ReentrantLock()
-
-    if !exists(temp)
-        mkdir(Path(temp), recursive=true)
-    end
 
     # Counting by multi-threads
     p = Progress(length(beds), 1, "Counting...")
-    open(done, "w+") do w
-        Threads.@threads for b = beds
-            if !haskey(progress, b.Name)
-                res = Bam.count_reads(bam_list, b)
-
-                open(joinpath(temp, b.Name), "a+") do w1
-                    stream = ZlibDeflateOutputStream(w1)
-                    
-                    for (key, value) in res
-                        if value > 0
-                            write(stream, string(Genomic.get_bed_key(b), "\t", key, "\t", value, "\n"))
-                        end
-                    end
-                    
-                    close(stream)
-                    close(w1)
-                end
-            end
-
-            lock(l)
-            write(w, string(b.Name, "\n"))
-            flush(w)
-            unlock(l)
-        
-            next!(p)
-        end
-    close(w)
-    end
-   
-    # merging results and calculate PSI
-    fs = readdir(temp)
-    p = Progress(length(fs), 1, "PSI...")
 
     wc = open(string(output, ".count.gz"), "w+")
     wp = open(string(output, ".psi.gz"), "w+")
 
-    sc = ZlibDeflateOutputStream(wc)
-    sp = ZlibDeflateOutputStream(wp)
+    sc = GzipCompressorStream(wc)
+    sp = GzipCompressorStream(wp)
 
-    Threads.@threads for f = fs
+    Threads.@threads for name = collect(keys(beds))
+        utrs = beds[name]
 
-        if string(f) == filename(done)
-            continue
-        end
-        
-        counts = Vector{String}()
-        data = Dict{String, Dict{String, Int}}()
         sums = Dict{String, Int}()
 
-        for line in eachline(open(joinpath(temp, f)) |> ZlibInflateInputStream)
-            line = strip(line)
-            push!(counts, line)
-            line = split(line, "\t")
-            if length(line) != 3
-                continue
-            end
-            
-            # log the counts of ATS
-            if !haskey(data, line[1])
-                data[line[1]] = Dict()
-            end
-            data[line[1]][line[2]] = parse(Int, line[3])
+        counts = Vector()
+        
+        # counting
+        for bs = utrs
+            res = Bam.count_reads(
+                bam_list,
+                generate_region_by_vec_of_regions(bs)
+            )
 
-            # log the sum of ATS
-            sums[line[2]] = get(sums, line[2], 0) + parse(Int, line[3])
+            push!(counts, res)
+
+            lock(l)
+            for b = bs
+                bStr = Genomic.get_bed_key(b)
+                site = b.Start
+                if b.Strand != "+"
+                    site = b.End
+                end
+
+                for (key, value) in get(res, site, Dict())
+                    if value > 0
+                        sums[key] = get(sums, key, 0) + value
+                        write(sc, string(bStr, "\t", key, "\t", value, "\n"))
+                    end
+                end
+            end
+            flush(wc)
+            unlock(l)
         end
 
-        lock(l)
-        for i in counts
-            write(sc, string(i, "\n"))
-        end
+        # PSI
+        for i in 1:length(utrs)
+            bs =  utrs[i]
+            res = counts[i]
 
-        # save psi
-        for (ats, barcodes) in data
-            for (bc, val) in barcodes
-                write(sp, string(ats, "\t", bc, "\t", val / sums[bc], "\n"))
+            for b = bs
+                bStr = Genomic.get_bed_key(b)
+                site = b.Start
+                if b.Strand != "+"
+                    site = b.End
+                end
+
+                lock(l)
+                for (key, value) in get(res, site, Dict())
+                    if value > 0
+                        write(sp, string(bStr, "\t", key, "\t", value / sums[key], "\n"))
+                    end
+                end
+                flush(wp)
+                unlock(l)
             end
         end
-        unlock(l)
+        
         next!(p)
     end
+
+    # force to write string to gzip file
+    # to avoid unexcept end of gzip file
+    write(sc, "\n")
+    write(sp, "\n")
 
     close(sc)
     close(sp)
     close(wc)
     close(wp)
-
-    if exists(temp)
-        FilePathsBase.rm(temp, recursive=true, force = true)
-    end
 end
 
 

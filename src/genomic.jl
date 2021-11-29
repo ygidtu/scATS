@@ -8,7 +8,7 @@ module Genomic
     using ProgressMeter
     using OrderedCollections
 
-    export GTF, Bed, create_GTF, load_GTF, isupstream, isdownstream, get_bed, new_bed
+    export GTF, Bed, create_GTF, load_GTF, isupstream, isdownstream, get_bed, new_bed, unique_beds
 
     @with_kw struct GTF
         Chrom::String
@@ -35,6 +35,7 @@ module Genomic
     end
 
     Base.show(io::IO, b::BED) = print(io, join([b.Chrom, b.Start, b.End, b.Name, b.Score, b.Strand], "\t"))
+    Base.:(==)(x::BED, y::BED) = x.Chrom == y.Chrom && x.Start == y.Start && x.End == y.End && x.Strand == y.Strand
 
     function get_bed(bed::BED, expand::Int=100)::String
         return join([
@@ -154,6 +155,28 @@ module Genomic
         return res
     end
 
+    function unique_beds(beds::Vector)::Vector
+        res = Vector()
+
+        beds = sort(beds)
+
+        if length(beds) <= 1
+            return beds
+        end
+
+        curr = beds[1]
+        for i in 2:length(beds)
+            if beds[i] != curr
+                push!(res, curr)
+                curr = beds[i]
+            end
+        end
+
+        push!(res, curr)
+
+        return res
+    end
+
     function load_GTF(gtf::AbstractString)::Dict
         data = Dict(
             "gene" => OrderedDict{String, Vector}(),   # genes and it's children transcript id
@@ -235,6 +258,9 @@ function isless(a::Genomic.Region, b::Genomic.Region)
         return a.Start < b.Start
     end
 
-    return a.End < b.End
+    if a.End != b.End
+        return a.End < b.End
+    end
+    return a.Strand < b.Strand
 end
 
