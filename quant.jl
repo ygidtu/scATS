@@ -63,7 +63,7 @@ function load_bed(input_file::String)::Dict{String, Vector{Vector}}
                         beds[temp["gene_name"]] = Vector()
                     end
 
-                    alpha = trunc.(Int, parse.(Float64, x))
+                    alpha = sort(trunc.(Int, parse.(Float64, x)))
 
                     push!(
                         beds[temp["gene_name"]], 
@@ -135,11 +135,7 @@ function quantification(input_file::String, bam::String, output::String; logger)
         
         # counting
         for bs = utrs
-            res = Bam.count_reads(
-                bam_list,
-                bs,
-                sites = collect(Iterators.flatten([[x.Start, x.End] for x = bs]))
-            )
+            res = Bam.count_reads(bam_list, bs)
 
             push!(counts, res)
 

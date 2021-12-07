@@ -78,6 +78,10 @@ ats_settings = ArgParseSettings()
         help = "minimum reads to construct ATS"
         arg_type = Int
         default = 5
+    "--seed"
+        help = "seed for consistance results"
+        arg_type = Int
+        default = 42
     "--fixed-inference"
         help="inference with fixed parameters"
         action = :store_true
@@ -128,11 +132,14 @@ end
 
 ccall(:jl_exit_on_sigint, Nothing, (Cint,), 0)
 
-try
-    main(ARGS[1])
-catch ex
-    println(ex)
-    if isa(ex, InterruptException)
-        info(logger, "caught keyboard interrupt")
-    end
-end
+# try
+#     main(ARGS[1])
+# catch ex
+#     if isa(ex, InterruptException)
+#         info(logger, "caught keyboard interrupt")
+#     else
+#         showerror(stdout, e, catch_backtrace())
+#     end
+# end
+
+main(ARGS[1])

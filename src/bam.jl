@@ -256,11 +256,11 @@ module Bam
                     continue
                 end
         
-                if BAM.leftposition(record) < region.End && BAM.rightposition(record) > region.Start
+                if BAM.leftposition(record) >= region.Start && BAM.rightposition(record) <= region.End
                     auxdata = Dict(BAM.auxdata(record))
 
                     if length(bam.barcodes) > 0
-                        if !haskey(auxdata, cell_tag) && !haskey(auxdata, umi_tag)
+                        if !haskey(auxdata, cell_tag) || !haskey(auxdata, umi_tag)
                             continue
                         end
 

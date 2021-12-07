@@ -50,17 +50,22 @@ function infer(args::Dict; logger)
             fixed_inference_flag=args["fixed-inference"],
             step_size=args["step-size"],
             nround=args["nround"],
-            max_beta=args["max-beta"]
+            max_beta=args["max-beta"],
+            seed=args["seed"]
         )
 
-        res = ATSModel.run(param)
-        res = ATSModel.toDict(res)
+        try
+            res = ATSModel.run(param)
+            res = ATSModel.toDict(res)
 
-        lock(l)
-        write(w, join([res[x] for x = header], "\t"))
-        write(w, "\n")
-        flush(w)
-        unlock(l)
+            lock(l)
+            write(w, join([res[x] for x = header], "\t"))
+            write(w, "\n")
+            flush(w)
+            unlock(l)
+        catch err
+
+        end
 
         next!(p)
     end

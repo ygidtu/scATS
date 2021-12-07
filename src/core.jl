@@ -42,15 +42,13 @@ module ATSModel
         max_unif_ws::Number = 0.1
         max_beta::Number = 50
         fixed_inference_flag::Bool = false
+        seed::Int = 42
 
         # initialize and other info
         step_size::Int = 5
         nround::Int = 50
         unif_log_lik::Union{Nothing, Number} = nothing
         predef_beta_arr::Union{Nothing, Vector{Number}} = nothing
-
-        pos_infinite::Number = Inf
-        neg_infinite::Number = -Inf
 
         # Result
         utr = nothing # Genomic.Region
@@ -61,7 +59,7 @@ module ATSModel
         alpha_arr::Vector{Number} = []
         beta_arr::Vector{Number} = []
         ws::Vector{Number} = []
-        bic::Float64 = 0.0
+        bic::Float64 = -Inf
         lb_arr::Vector{Number} = []
     end
 
@@ -75,7 +73,8 @@ module ATSModel
         fixed_inference_flag::Bool = false,
         step_size::Int = 5,
         nround::Int = 50,
-        max_beta::Number = 50
+        max_beta::Number = 50,
+        seed::Int = 42
     )::Param
         return Param(
             st_arr = st_arr, 
@@ -92,6 +91,7 @@ module ATSModel
             fixed_inference_flag = fixed_inference_flag,
             step_size = step_size, 
             nround = nround,
+            seed = seed
         )
     end
 
@@ -107,7 +107,7 @@ module ATSModel
             "beta_arr" => ".",
             "ws" => ".",
             "L" => 0,
-            "bic" => 0
+            # "bic" => 0
         )
 
         if isnothing(self)
@@ -262,14 +262,14 @@ module ATSModel
     # perform inference given alpha_arr and beta_arr
     ## Param or Results
     function fixed_inference(self::Param)::Param
-        self.ws = init_ws(length(self.alpha_arr))
+        self.ws = init_ws(self, length(self.alpha_arr))
         return em_algo(self)
     end
 
     # perform inference for K components
     # theta_arr => theta_win_mat
     function em_algo(self::Param)::Param
-        lb = self.neg_infinite
+        lb = -Inf
         lb_arr = []
         N = length(self.st_arr)
         K = length(self.alpha_arr) - 1
@@ -306,26 +306,16 @@ module ATSModel
                 lb = lb_new
             end
         end
-        debug(LOGGER, Formatting.format(
-            FormatExpr("em_algo: Run all {} interactions. lb={}"), i, lb
-        ))
-
-        bic = NaN
-        if !isnothing(Z) 
-            bic = cal_bic(log_zmat, Z)
-        end
         
-        debug(LOGGER, Formatting.format(
-            FormatExpr("em_algo: bic={}; estimated ws: {}; estimated alpha:  {}; estimated beta: {}"), 
-            bic, self.ws, self.alpha_arr, self.beta_arr
-        ))
-
         self.lb_arr = lb_arr[findall(x -> !isnan(x), lb_arr)]
 
         sorted_inds = sortperm(self.alpha_arr)
         self.alpha_arr = self.alpha_arr[sorted_inds]
         self.beta_arr = self.beta_arr[sorted_inds]
         self.ws = self.ws[sorted_inds]
+        if !isnothing(Z) 
+            self.bic = cal_bic(log_zmat, Z)
+        end
 
         return self
     end
@@ -337,7 +327,8 @@ module ATSModel
 
         kernel = kde(
             self.st_arr,
-            npoints=npoints, kernel = Normal,
+            npoints=npoints, 
+            kernel = Normal,
             boundary=boundary
         )
 
@@ -354,12 +345,12 @@ module ATSModel
 
         # 峰太多了就随机挑选，太少了就补
         if n_ats <= length(peaks)
-            return StatsBase.sample(peaks, ProbabilityWeights(peaks_ws), n_ats, replace = false,)
+            return StatsBase.sample(MersenneTwister(self.seed), peaks, ProbabilityWeights(peaks_ws), n_ats, replace = false)
         else
-            mu = StatsBase.sample(peaks, ProbabilityWeights(peaks_ws), n_ats - length(peaks), replace = true)
+            mu = StatsBase.sample(MersenneTwister(self.seed), peaks, ProbabilityWeights(peaks_ws), n_ats - length(peaks), replace = true)
 
             push!(peaks, mu...)
-            shift = trunc.(Int, rand(Normal(0, 5 * self.step_size), n_ats))
+            shift = round.(Int, rand(MersenneTwister(self.seed), Normal(0, 5 * self.step_size), n_ats)) # MersenneTwister(42), 
 
             return peaks .+ shift
         end
@@ -380,7 +371,7 @@ module ATSModel
     # init alpha_arr, beta_arr, ws
     function init_para(self::Param, n_ats::Int)::Param
         self.alpha_arr = sample_alpha(self, n_ats)
-        self.beta_arr = StatsBase.sample(self.predef_beta_arr, n_ats, replace = true)
+        self.beta_arr = StatsBase.sample(MersenneTwister(self.seed), self.predef_beta_arr, n_ats, replace = true)
         self.ws = init_ws(self, n_ats)
         return self
     end
@@ -401,21 +392,15 @@ module ATSModel
 
     function em_optim0(self::Param, n_ats::Int)::Param
         n_trial = 5
-        lb_arr = [self.neg_infinite for _ = 1:n_trial]
-        bic_arr =  [self.pos_infinite for _ = 1:n_trial]
 
         res_list = []
-        for i = 1:n_trial
-            para = init_para(self, n_ats)
-
-            temp = em_algo(para)
-            push!(res_list, temp)
-            
-            lb_arr[i] =  temp.lb_arr[length(temp.lb_arr)]
-            bic_arr[i] = temp.bic
+        for _ = 1:n_trial
+            para = init_para(deepcopy(self), n_ats)
+            para = em_algo(para)
+            push!(res_list, deepcopy(para))
         end
 
-        min_ind = argmin(bic_arr)
+        min_ind = argmin([x.bic for x = res_list])
         return res_list[min_ind]
     end
 
@@ -434,23 +419,19 @@ module ATSModel
 
         self.predef_beta_arr = collect(self.step_size:self.step_size:self.max_beta)
 
-        n_ats_trial = self.n_max_ats - self.n_min_ats + 1
-        bic_arr = [self.pos_infinite for _ in 1:n_ats_trial]
-        res_list = []
         self.unif_log_lik = lik_f0(self.L, do_log = true)
-
+        res_list = []
         for n_ats = self.n_max_ats:-1:self.n_min_ats
+            # use deepcopy to save data, or the res will be override
             res = em_optim0(self, n_ats)
-            push!(res_list, res)
-            bic_arr[self.n_max_ats - n_ats + 1] = res.bic
+            push!(res_list, deepcopy(res))
         end
 
-        min_ind = argmin(bic_arr)
-        res = res_list[min_ind]
-
-        res = rm_component(self)
+        # choose the smallest BIC value
+        min_ind = argmin([x.bic for x = res_list])
+        res = rm_component(res_list[min_ind])
         # convert alpha_arr from float to int
-        res.alpha_arr = trunc.(Int, res.alpha_arr)
+        res.alpha_arr = round.(Int, res.alpha_arr)
         return res
     end
 
