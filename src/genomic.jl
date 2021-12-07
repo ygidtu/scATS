@@ -2,13 +2,13 @@ import Base.isless
 
 
 module Genomic
-    using BSON
+    using CodecZlib
     using Formatting
     using Parameters
     using ProgressMeter
     using OrderedCollections
 
-    export GTF, Bed, create_GTF, load_GTF, isupstream, isdownstream, get_bed, new_bed, unique_beds
+    export GTF, Bed, create_GTF, load_UTRs, isupstream, isdownstream, get_bed, new_bed, unique_beds
 
     @with_kw struct GTF
         Chrom::String
@@ -25,6 +25,148 @@ module Genomic
 
     Base.show(io::IO, g::GTF) = print(io,  g.Chrom, ":", g.Start, "-", g.End, ":", g.Strand, "\t", g.Type, "\t", g.ID, "-", g.Name, "\t", g.GeneID, "\t", g.TranscriptID)
 
+    # GTF related functions
+    # convert gtf attributes to dict
+    function extract_attributes(record::SubString)::Dict{String, String}
+        res = Dict()
+        temp = split(record, " ")
+
+        for i = 1:2:length(temp)
+            if i+1 <= length(temp)
+                res[temp[i]] = strip(temp[i+1], ['"', ';'])
+            end
+        end
+
+        for k = ["gene_name", "transcript_name"]
+            if !haskey(res, k)
+                res[k] = get(res, "Parent", "")
+            end
+        end
+
+        for k = ["gene_id", "transcript_id"]
+            if !haskey(res, k)
+                res[k] = get(res, "Parent", "")
+            end
+        end
+
+        return res
+    end
+    
+    # create gtf from gtf line
+    function create_GTF(record::String)::GTF
+
+        records = split(strip(record), "\t")
+        attributes = extract_attributes(records[9])
+        
+        id, name, gene_id, transcript_id = "", "", "", ""
+        if records[3] == "gene"
+            id, name = attributes[string(records[3], "_id")], get(attributes, string(records[3], "_name"), "")
+        elseif records[3] in ["transcript", "exon"]
+            id, name, gene_id, transcript_id = attributes[string(records[3], "_id")], get(attributes, string(records[3], "_name"), ""), attributes["gene_id"], attributes["transcript_id"]
+        end
+
+        return GTF(
+            records[1], 
+            parse(Int64, records[4]),
+            parse(Int64, records[5]), 
+            records[7],
+            records[3], id, name, gene_id, transcript_id,
+            attributes
+        )
+    end
+
+    function load_UTRs(gtf::AbstractString; utr_length::Int = 500)::Vector
+        data = Dict(
+            "transcript" => Dict{String, Genomic.GTF}(),  # transcript id and GTF
+            "exon" => Dict{String, Vector}()  # transcript id and it's chiledren exons
+        )
+
+        open(gtf) do io
+            seekend(io)
+            fileSize = position(io)
+            seekstart(io)
+
+            p = Progress(fileSize, 1, "Loading...")   # minimum update interval: 1 second
+
+            stream = eachline(io)
+            if endswith(gtf, ".gz")
+                stream = eachline(GzipDecompressorStream(io))
+            end
+
+            for line = eachline(io)
+                if startswith(line, "#")
+                    continue
+                end
+
+                gtf = Genomic.create_GTF(line)
+
+                if occursin(r"(transcript|RNA)"i, gtf.Type)
+                    data[gtf.Type][gtf.ID] = gtf
+                elseif occursin(r"(exon)"i, gtf.Type)
+                    if !haskey(data["transcript"], gtf.TranscriptID)
+                        continue
+                    end
+
+                    if !haskey(data[gtf.Type], gtf.TranscriptID)
+                        data[gtf.Type][gtf.TranscriptID] = Vector()
+                    end
+                    push!(data[gtf.Type][gtf.TranscriptID], gtf)
+                end
+                update!(p, position(io))
+            end
+        end
+
+        # calculate UTR by exons range
+        utr_length = div(utr_length, 2)
+        utrs = Dict()
+
+        l = Threads.SpinLock()
+        p = Progress(length(data["transcript"]), 1, "Calculating UTRs...")
+        Threads.@threads for transcript = collect(values(data["transcript"]))
+            lock(l)
+            if !haskey(utrs, transcript.Strand)
+                utrs[transcript.Strand] = Vector{BED}()
+            end
+            unlock(l)
+
+            exons = sort(get(data["exon"], transcript.ID, []))
+
+            if length(exons) < 1
+                continue
+            end
+
+            site = exons[1].Start
+            if transcript.Strand != "+"
+                site = exons[length(exons)].End 
+            end
+
+            lock(l)
+            push!(utrs[transcript.Strand], BED(
+                transcript.Chrom,
+                site - utr_length,
+                site + utr_length,
+                transcript.Attributes["gene_name"],
+                transcript.Name,
+                transcript.Strand
+            ))
+            unlock(l)
+
+            next!(p)
+        end
+
+        # merging
+        res = Vector()
+        Threads.@threads for strand = collect(keys(utrs))
+            temp = merge(utrs[strand])
+
+            lock(l)
+            res = vcat(res, temp)
+            unlock(l)
+        end
+
+        return sort(res)
+    end
+
     @with_kw struct BED
         Chrom::String
         Start::Int64
@@ -37,6 +179,7 @@ module Genomic
     Base.show(io::IO, b::BED) = print(io, join([b.Chrom, b.Start, b.End, b.Name, b.Score, b.Strand], "\t"))
     Base.:(==)(x::BED, y::BED) = x.Chrom == y.Chrom && x.Start == y.Start && x.End == y.End && x.Strand == y.Strand
 
+    # BED related functions
     function get_bed(bed::BED, expand::Int=100)::String
         return join([
             bed.Chrom, 
@@ -85,45 +228,7 @@ module Genomic
         )
     end
 
-    Region = Union{Genomic.GTF, Genomic.BED}
-
-    # convert gtf attributes to dict
-    function extract_attributes(record::SubString)::Dict{String, String}
-        res = Dict()
-        temp = split(record, " ")
-
-        for i = 1:2:length(temp)
-            if i+1 <= length(temp)
-                res[temp[i]] = strip(temp[i+1], ['"', ';'])
-            end
-        end
-        return res
-    end
-
-    # create gtf from gtf line
-    function create_GTF(record::String)::GTF
-
-        records = split(strip(record), "\t")
-        attributes = extract_attributes(records[9])
-        
-        id, name, gene_id, transcript_id = "", "", "", ""
-        if records[3] == "gene"
-            id, name = attributes[string(records[3], "_id")], get(attributes, string(records[3], "_name"), "")
-        elseif records[3] in ["transcript", "exon"]
-            id, name, gene_id, transcript_id = attributes[string(records[3], "_id")], get(attributes, string(records[3], "_name"), ""), attributes["gene_id"], attributes["transcript_id"]
-        end
-
-        return GTF(
-            records[1], 
-            parse(Int64, records[4]),
-            parse(Int64, records[5]), 
-            records[7],
-            records[3], id, name, gene_id, transcript_id,
-            attributes
-        )
-    end
-
-    # sort gtf
+    # merge BED
     function merge(beds::Vector{BED})::Vector{BED}
         res = Vector()
 
@@ -145,8 +250,8 @@ module Genomic
                     Chrom = old_bed.Chrom,
                     Start = old_bed.Start, 
                     End = beds[i].End,
-                    Name = join(unique([old_bed.Name, beds[i].Name]), "|"), 
-                    Score = join(unique([old_bed.Score, beds[i].Score]), "|"),
+                    Name = join(unique([old_bed.Name, beds[i].Name]), ","), 
+                    Score = join(unique([old_bed.Score, beds[i].Score]), ","),
                     Strand = old_bed.Strand
                 )
             end
@@ -177,56 +282,18 @@ module Genomic
         return res
     end
 
-    function load_GTF(gtf::AbstractString)::Dict
-        data = Dict(
-            "gene" => OrderedDict{String, Vector}(),   # genes and it's children transcript id
-            "transcript" => OrderedDict{String, Genomic.GTF}(),  # transcript id and GTF
-            "exon" => Dict{String, Vector}()  # transcript id and it's chiledren exons
-        )
-
-        open(gtf) do io
-            seekend(io)
-            fileSize = position(io)
-            seekstart(io)
-
-            p = Progress(fileSize, 1)   # minimum update interval: 1 second
-            while !eof(io)
-                line = readline(io)
-                if startswith(line, "#")
-                    continue
-                end
-
-                gtf = Genomic.create_GTF(line)
-
-                if gtf.Type == "transcript"
-                    # if there is not gene_biotype or gene_biotype is not specific types passed
-                    # if !haskey(gtf.Attributes, "gene_biotype") || !(gtf.Attributes["gene_biotype"] in ["antisense", "lincRNA", "protein_coding"])
-                    #     continue
-                    # end
-
-                    if !haskey(data["gene"], gtf.GeneID)
-                        data["gene"][gtf.GeneID] = Vector()
-                    end
-                    push!(data["gene"][gtf.GeneID], gtf.TranscriptID)
-
-                    data[gtf.Type][gtf.ID] = gtf
-                elseif gtf.Type == "exon"
-                    if !haskey(data["transcript"], gtf.TranscriptID)
-                        continue
-                    end
-
-                    if !haskey(data[gtf.Type], gtf.TranscriptID)
-                        data[gtf.Type][gtf.TranscriptID] = Vector()
-                    end
-                    push!(data[gtf.Type][gtf.TranscriptID], gtf)
-                end
-                update!(p, position(io))
-            end
-        end
-
-        return data
+    # sites
+    @with_kw struct Sites
+        Chrom::String
+        Start::Int64
+        End::Int64
+        Strand::String
+        Sites::Vector{Int}
     end
 
+    Region = Union{Genomic.GTF, Genomic.BED}
+
+    # Region related functions
     function isupstream(a::Region, b::Region)::Bool
         if a.Chrom != b.Chrom
             return a.Chrom < b.Chrom

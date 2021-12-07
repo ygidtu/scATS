@@ -1,10 +1,10 @@
 module Bam
     using BioAlignments
+    using CodecZlib
     using Compat: @__MODULE__  # requires a minimum of Compat 0.26. Not required on Julia 0.7
     using FilePathsBase
     using Formatting
     using GenomicFeatures
-    using Libz
     using Memento
     using Parameters
     using ProgressMeter
@@ -44,7 +44,12 @@ module Bam
     function prepare_bam_list(path::String)::Vector{BamData}
         fs = Vector{BamData}()
         for line in eachline(open(path))
-            line = split(line, "\t")
+
+            if occursin("\t", line)
+                line = split(line, "\t")
+            else
+                line = split(line, "    ")
+            end
 
             if !exists(Path(line[1]))
                 error(LOGGER, Formatting.format(
@@ -76,15 +81,18 @@ module Bam
             return barcodes
         end
 
-        for line in eachline(open(path) |>  ZlibInflateInputStream)
-            line = strip(line)
-            key = line[1:min(length(line), 3)]
+        open(path) do r
+            for line in eachline(GzipDecompressorStream(r))
+                line = strip(line)
+                key = line[1:min(length(line), 3)]
 
-            if !haskey(barcodes, key)
-                barcodes[key] = Set()
+                if !haskey(barcodes, key)
+                    barcodes[key] = Set()
+                end
+
+                push!(barcodes[key], line)
             end
-
-            push!(barcodes[key], line)
+            close(r)
         end
         return barcodes
     end
@@ -99,7 +107,7 @@ module Bam
         return haskey(bam.barcodes, key) && (barcode in bam.barcodes[key])
     end
 
-    function filter(record, bulk::Bool = false)::Bool
+    function filter(record)::Bool
         #=
         Filter low quality reads
         =#
@@ -121,11 +129,7 @@ module Bam
             return false
         end
         
-        if bulk
-            return true
-        end
-    
-        return haskey(auxdata, "CB") && haskey(auxdata, "UB")
+        return true
     end
     
     function determine_strand(record)::String
@@ -147,7 +151,7 @@ module Bam
         return strand
     end
     
-    function count_reads(bam_list::Vector, region, cell_tag::String="CB", umi_tag::String="UB")::Dict{Int, Dict{String, Int}}
+    function count_reads(bam_list::Vector, region; cell_tag::String="CB", umi_tag::String="UB")::Dict{Int, Dict{String, Int}}
         res = Dict()
     
         for bam in bam_list
@@ -166,6 +170,12 @@ module Bam
         
                 if BAM.leftposition(record) < region.End && BAM.rightposition(record) > region.Start
                     auxdata = Dict(BAM.auxdata(record))
+
+                    # only support 10x now
+                    if !haskey(auxdata, cell_tag) || !haskey(auxdata, umi_tag)
+                        continue
+                    end
+
                     cb = auxdata[cell_tag]
                     ub = auxdata[umi_tag]
     
@@ -175,6 +185,11 @@ module Bam
                         end
 
                         for i = region.Start:region.End
+
+                            if !isnothing(region.Sites) && !(i in region.Sites)
+                                continue
+                            end
+
                             if !haskey(res, i)
                                 res[i] = Dict()
                             end
@@ -222,6 +237,48 @@ module Bam
             res[bam.alias] = count
         end
         return res
+    end
+    
+    function load_reads(bam_list::Vector, region; cell_tag::String="CB", umi_tag::String="UB")::Vector{Int}
+        st_arr = Vector()
+
+        for bam = bam_list
+            reader = open(BAM.Reader, bam.path, index=string(bam.path, ".bai"))
+            for record in eachoverlap(reader, region.Chrom, region.Start:region.End)
+                if !filter(record)
+                    continue
+                end
+        
+                # read strand
+                strand = determine_strand(record)
+        
+                if strand != region.Strand
+                    continue
+                end
+        
+                if BAM.leftposition(record) < region.End && BAM.rightposition(record) > region.Start
+                    auxdata = Dict(BAM.auxdata(record))
+
+                    if length(bam.barcodes) > 0
+                        if !haskey(auxdata, cell_tag) && !haskey(auxdata, umi_tag)
+                            continue
+                        end
+
+                        if !check_barcode(bam, auxdata[cell_tag])
+                            continue
+                        end
+                    end
+
+                    if region.Strand == "+"
+                        push!(st_arr, BAM.leftposition(record) - region.Start)
+                    else
+                        push!(st_arr, region.End - BAM.rightposition(record))
+                    end
+                end
+            end
+        end
+
+        return st_arr
     end
 
     # function test()
