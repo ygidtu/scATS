@@ -141,12 +141,12 @@ module Genomic
 
             lock(l)
             push!(utrs[transcript.Strand], BED(
-                transcript.Chrom,
-                site - utr_length,
-                site + utr_length,
-                transcript.Attributes["gene_name"],
-                transcript.Name,
-                transcript.Strand
+                Chrom = transcript.Chrom,
+                Start = site - utr_length,
+                End = site + utr_length,
+                Name = transcript.Attributes["gene_name"],
+                Score = transcript.Name,
+                Strand = transcript.Strand
             ))
             unlock(l)
 
@@ -173,7 +173,7 @@ module Genomic
         Name::String
         Score::String
         Strand::String
-        Sites::Vector{Int}
+        Sites::Vector{Int} = []
     end
 
     Base.show(io::IO, b::BED) = print(io, join([b.Chrom, b.Start, b.End, b.Name, b.Score, b.Strand], "\t"))
@@ -183,7 +183,7 @@ module Genomic
         chrom::AbstractString, start_pos::Int, end_pos::Int, strand::AbstractString; 
         name::AbstractString=".", score::AbstractString=".", sites::Vector = []
     )
-        return BED(string(chrom), start_pos, start_pos, string(name), string(score), string(strand),sites)
+        return BED(string(chrom), start_pos, end_pos, string(name), string(score), string(strand), sites)
     end
 
     # merge BED
