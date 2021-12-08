@@ -1,107 +1,108 @@
-# ATAMix
+# scATS.jl
 
 A sutie of scripts for infer alternative transcription start sites based on 5' single cell sequencing
+
+This version should be faster than python version of scATS.
 
 ## Installation
 
 ```bash
 git clone 
 
-cd
+cd scATS
+git checkout julia
 
-julia build.jl
+julia -e "using Pkg; Pkg.resolve(); Pkg.instantiate()"
 ```
-
-> `samtools` maybe required, if there is not `.bai` index for input bam file
 
 ## Usage
 
-### 1. prepare UTR region based on gtf file
-
 ```bash
-> julia ./prepare.jl --help
-usage: prepare.jl -g GTF -p PREFIX [-d DISTANCE] [-h]
-
-optional arguments:
-  -g, --gtf GTF         Path to gtf file
-  -p, --prefix PREFIX   Prefix of output file
-  -d, --distance DISTANCE
-                        The distance between utr to merge. (type:
-                        Int64, default: 0)
-  -h, --help            show this help message and exit
+❯ julia --project=@. ./main.jl
+[2021-12-08 15:33:15 - info | root]: please set running subcommand: ats or count
+usage: main.jl cmd
 ```
 
-### 2. infer ATS
-
-- default julia kernel support multi-threading, please set the number of threads to use by `julia -t n` or `export JULIA_NUM_THREADS=n`
-
-- `--using-R` is conflist with Theads, therefore pleas using `--using-R n` to enable  multi processing to process data
+### 1. infer ATS
 
 ```bash
-> julia run.jl --help
-usage: run.jl -i INPUT -b BAM -o OUTPUT [-d DISTANCE] [--using-R]
-              [-p PROCESS] [--n-max-ats N-MAX-ATS]
-              [--n-min-ats N-MIN-ATS] [--mu-f MU-F]
-              [--sigma-f SIGMA-F] [--min-ws MIN-WS]
-              [--max-beta MAX-BETA] [--min-reads MIN-READS]
-              [--single-end] [--fixed-inference] [--verbose] [-h]
+❯ julia --project=@. ./main.jl ats -h
+usage: main.jl -b BAM -g GTF -o OUTPUT [-u UTR-LENGTH] [-t THREADS]
+               [--n-max-ats N-MAX-ATS] [--n-min-ats N-MIN-ATS]
+               [--min-ws MIN-WS] [--max-unif-ws MAX-UNIF-WS]
+               [--max-beta MAX-BETA] [--step-size STEP-SIZE]
+               [--nround NROUND] [--min-reads MIN-READS] [--seed SEED]
+               [--fixed-inference] [-p PROCESS] [-h]
 
 optional arguments:
-  -i, --input INPUT     Path to utr bed
-  -b, --bam BAM         Path to bam file
-  -o, --output OUTPUT   Prefix of output file
-  -d, --distance DISTANCE
-                        The minimum distance of read in utr. (type:
-                        Int64, default: 1500)
-  --using-R             whether to use R version of model
+  -b, --bam BAM         Path to bam list
+  -g, --gtf GTF         Path to reference annotation file, GTF format
+  -o, --output OUTPUT   The path to output file
+  -u, --utr-length UTR-LENGTH
+                        The length of UTR region (type: Int64,
+                        default: 500)
+  -t, --threads THREADS
+                        How many threads to use (type: Int64, default:
+                        1)
   --n-max-ats N-MAX-ATS
                         the maximum of ats inside a utr (type: Int64,
                         default: 5)
   --n-min-ats N-MIN-ATS
                         the minimum of ats inside a utr (type: Int64,
                         default: 1)
-  --mu-f MU-F           mu f (type: Int64, default: 300)
-  --sigma-f SIGMA-F     sigma-f (type: Int64, default: 50)
-  --min-ws MIN-WS       min ws (type: Float64, default: 0.01)
+  --min-ws MIN-WS       min ws (type: Float64, default: 0.1)
+  --max-unif-ws MAX-UNIF-WS
+                        maximum uniform ws (type: Float64, default:
+                        0.1)
   --max-beta MAX-BETA   maximum beta (type: Float64, default: 50.0)
+  --step-size STEP-SIZE
+                        step size (type: Int64, default: 5)
+  --nround NROUND       number of round to test (type: Int64, default:
+                        50)
   --min-reads MIN-READS
                         minimum reads to construct ATS (type: Int64,
-                        default: 0)
-  --single-end          whether this is sinle-end sequencing
+                        default: 5)
+  --seed SEED           seed for consistance results (type: Int64,
+                        default: 42)
   --fixed-inference     inference with fixed parameters
-  --verbose             whether to display additional message
-  -h, --help            show this help message and exit
-```
-
-### 3. merge output peaks
-
-```bash
-> julia merge.jl --help
-usage: merge.jl -o OUTPUT [-e EXPAND] [-h] ats...
-
-positional arguments:
-  ats                  Path to atsmix output file
-
-optional arguments:
-  -o, --output OUTPUT  Path to output.
-  -e, --expand EXPAND  How many bp to expand (type: Int64, default:
-                       100)
-  -h, --help           show this help message and exit
-```
-
-### 4. quantification
-
-```bash
-> julia quant.jl --help
-usage: quant.jl -i INPUT -c CELLRANGER -o OUTPUT [-p PROCESS] [-h]
-
-optional arguments:
-  -i, --input INPUT     Path to merged peaks bed
-  -c, --cellranger CELLRANGER
-                        Path to cellranger outs directory
-  -o, --output OUTPUT   Prefix of output file
   -p, --process PROCESS
-                        How many processes to use (type: Int64,
+                        Number of processes to used. (type: Int64,
                         default: 1)
   -h, --help            show this help message and exit
+```
+
+### 2. quantification
+
+```bash
+❯ julia --project=@. ./main.jl count -h
+usage: main.jl -i INPUT -b BAM -o OUTPUT [-p PROCESS] [-h]
+
+optional arguments:
+  -i, --input INPUT     Path to merged peaks bed.
+  -b, --bam BAM         Path to bam list.
+  -o, --output OUTPUT   Prefix of output file.
+  -p, --process PROCESS
+                        Number of processes to used. (type: Int64,
+                        default: 1)
+  -h, --help            show this help message and exit
+```
+
+#### Run Example
+
+```bash
+cd simulation
+
+python simulation.py /path/to/reference/gtf /path/to/reference/fasta --total 10000
+```
+
+Generate bam list file as follow
+
+```bash
+./simu.bam    simu
+```
+
+Run inference
+
+```bash
+julia --project=@.  ../main.jl ats -b ./bam.list  -g ./tss.gtf -o ./simu.txt -p 6
 ```

@@ -6,9 +6,8 @@ module Genomic
     using Formatting
     using Parameters
     using ProgressMeter
-    using OrderedCollections
 
-    export GTF, Bed, create_GTF, load_UTRs, isupstream, isdownstream, get_bed, new_bed, unique_beds
+    export GTF, BED, load_UTRs, new
 
     @with_kw struct GTF
         Chrom::String
@@ -174,58 +173,17 @@ module Genomic
         Name::String
         Score::String
         Strand::String
+        Sites::Vector{Int}
     end
 
     Base.show(io::IO, b::BED) = print(io, join([b.Chrom, b.Start, b.End, b.Name, b.Score, b.Strand], "\t"))
     Base.:(==)(x::BED, y::BED) = x.Chrom == y.Chrom && x.Start == y.Start && x.End == y.End && x.Strand == y.Strand
 
-    # BED related functions
-    function get_bed(bed::BED, expand::Int=100)::String
-        return join([
-            bed.Chrom, 
-            max(0, bed.Start - expand), 
-            bed.End + expand, 
-            bed.Name, bed.Score, 
-            bed.Strand
-        ], "\t")
-    end
-
-    function new_bed(line::String)::BED  # ; chromosomes::Dict{String, String}=nothing
-        lines = split(strip(line), "\t")
-        
-        if length(lines) >= 6
-            return BED(
-                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),  # replace(lines[1], "chr"=>"")
-                lines[4], strip(lines[5]), lines[6]
-            )
-        elseif length(lines) == 3
-            return BED(
-                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),
-                ".", ".", "."
-            )
-        elseif length(lines) == 4
-            return BED(
-                lines[1], parse(Int64, lines[2]), parse(Int64, lines[3]),
-                ".", ".", strip(lines[4])
-            )
-        else
-            error(LOGGER, string("the number of columns mismatch: ", lines))
-            exit(1)
-        end
-    end
-
-    function get_bed_short(self)::String
-        return Formatting.format(
-            FormatExpr("{}:{}-{}:{}"),
-            self.Chrom, self.Start, self.End, self.Strand
-        )
-    end
-
-    function get_bed_key(self)::String
-        return Formatting.format(
-            FormatExpr("{}_{}"),
-            self.Name, get_bed_short(self)
-        )
+    function new(
+        chrom::AbstractString, start_pos::Int, end_pos::Int, strand::AbstractString; 
+        name::AbstractString=".", score::AbstractString=".", sites::Vector = []
+    )
+        return BED(string(chrom), start_pos, start_pos, string(name), string(score), string(strand),sites)
     end
 
     # merge BED
@@ -280,15 +238,6 @@ module Genomic
         push!(res, curr)
 
         return res
-    end
-
-    # sites
-    @with_kw struct Sites
-        Chrom::String
-        Start::Int64
-        End::Int64
-        Strand::String
-        Sites::Vector{Int}
     end
 
     Region = Union{Genomic.GTF, Genomic.BED}
