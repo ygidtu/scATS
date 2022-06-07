@@ -165,3 +165,4 @@ others/bin/*
 *.tar.bz2
 testfile/
 *.csv
+*.temp/
