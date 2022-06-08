@@ -61,7 +61,7 @@ setup(
         "colorama==0.4.4; python_version >= '2.7' and python_version not in '3.0, 3.1, 3.2, 3.3, 3.4'",
         "commonmark==0.9.1",
         "importlib-metadata==4.4.0; python_version < '3.8'",
-        "numpy==1.20.3",
+        "numpy>=1.21",
         "pygments==2.9.0; python_version >= '3.5'",
         "pysam==0.16.0.1",
         "rich==10.2.2",
