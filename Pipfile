@@ -8,10 +8,12 @@ rich = "*"
 click = "*"
 pysam = "*"
 scipy = "*"
-numpy = "*"
+numpy = ">=1.2.1"
+sklearn = "*"
+pybigwig = "*"
+pybedtools = "*"
 
 [dev-packages]
-pipenv-setup = "*"
 
 [requires]
-python_version = ">=3.7"
+python_version = ">=3.6"
