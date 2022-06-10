@@ -175,7 +175,7 @@ def __get_strand__(read: pysam.AlignedSegment) -> str:
     u"""
     determine the reads strand
 
-    :params read: 
+    :params read:
     """
 
     if read.is_paired:
@@ -216,7 +216,7 @@ def __is_barcode_exists__(barcodes: dict, rec: pysam.AlignedSegment) -> bool:
     u"""
     check whether this read contains required barcode
     :params barcodes: a collection of required barcodes
-    :params rec: 
+    :params rec:
     """
     if not rec.has_tag("CB"):
         return False

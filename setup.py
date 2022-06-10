@@ -13,6 +13,10 @@ from os import path
 
 here = path.abspath(path.dirname(__file__))
 
+config = configparser.ConfigParser()
+config.read(path.join(here, 'Pipfile'))
+
+
 # Get the long description from the README file
 with open(path.join(here, "README.md"), encoding="utf-8") as f:
     long_description = f.read()
@@ -33,7 +37,7 @@ def load_packages():
 # Fields marked as "Optional" may be commented out.
 setup(
     name="scats",  # Required
-    version="0.0.0",  # Required
+    version=config["description"]["version"].strip('"'),  # Required
     description="A sample Python project",  # Optional
     long_description=long_description,  # Optional
     long_description_content_type="text/markdown",  # Optional (see note above)

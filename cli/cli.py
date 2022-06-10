@@ -5,6 +5,9 @@ Created at 2021.04.25 by Zhang
 
 Command line handlers
 """
+import configparser
+import os
+
 import click
 
 from cli.ats import ats
@@ -13,9 +16,15 @@ from cli.isoform import isoform
 from cli.train import train
 from cli.filter import filter
 from cli.counts import count
+from src.logger import init_logger
 
 
-VERSION = "0.0.1-beta"
+init_logger("INFO")
+
+config = configparser.ConfigParser()
+config.read(os.path.join(os.path.dirname(os.path.dirname(__file__)), 'Pipfile'))
+
+VERSION = config["description"]["version"].strip('"')
 LABEL = "scATS"
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 

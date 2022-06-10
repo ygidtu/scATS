@@ -3,6 +3,9 @@ url = "https://mirrors.aliyun.com/pypi/simple/"
 verify_ssl = true
 name = "pypi"
 
+[description]
+version = "0.0.1-beta"
+
 [packages]
 rich = ">=12.4.4"
 click = ">=8.1.3"

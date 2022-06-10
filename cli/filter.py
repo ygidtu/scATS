@@ -23,12 +23,18 @@ def func(x, a, b, c):  # Gaussian peak
 
 
 def calculate_gaussian_density_similarity(x: np.array, y: np.array) -> float:
-
+    if len(x) < 3:
+        return -1
     # estimate initial parameters from the data
-    initial_parameters = np.array([max(y), (max(x) + min(x)) / 2, max(y)], dtype=float)
+    val = [max(y), (max(x) + min(x)) / 2, max(y)]
+    initial_parameters = np.array(val, dtype=float)
 
     # curve fit the test data
-    fitted_parameters, p_cov = curve_fit(func, x, y, initial_parameters)
+    try:
+        fitted_parameters, p_cov = curve_fit(func, x, y, initial_parameters, maxfev=5000)
+    except RuntimeError as err:
+        log.debug(err)
+        return -1
     model_predictions = func(x, *fitted_parameters)
     abs_error = model_predictions - y
 
@@ -41,7 +47,7 @@ def calculate_gaussian_density_similarity(x: np.array, y: np.array) -> float:
 
 class ATS:
     u"""summary_line
-    
+
     utr	reference_id	reference_name	number_of_reads	inferred_sites	alpha_arr	beta_arr	ws	L
     5:122704569-122705569:-	ENSG00000251538,ENST00000514657,ENSE00002071527	LINC02201,LINC02201-203	13	122704940,
     122704839	629,730	5,5	0.07566976284989525,0.9218149110366607,0.002515326113444209	1000
@@ -72,7 +78,7 @@ class ATS:
 
     @property
     def chrom(self) -> str:
-        return self.utr.chrom
+        return self.utr.chromosome
 
     @property
     def strand(self) -> str:
@@ -124,10 +130,12 @@ class ATS:
                 Region(chromosome=self.utr.chromosome, start=start, end=end, strand=self.strand),
                 barcode={}, remove_duplicate_umi=True
         ):
+            if r2 is None:
+                r2 = r1
             ss = r1.start if self.utr.strand == "+" else r2.end
             vals[ss] = vals.get(ss, 0) + 1
 
-        return np.array(vals.keys()), np.array(vals.values())
+        return np.array(list(vals.keys())), np.array(list(vals.values()))
 
     def check(self, bigwig: str, classifier, bams: List[str]):
         u"""
@@ -202,7 +210,9 @@ def filter(infile: str, bigwig: str, output: str, classifier: str, n_jobs: int, 
         w.write(header + "\n")
 
         with Pool(n_jobs) as p:
-            for row in list(track(p.imap_unordered(call, [[ats, bigwig, rfc, bams] for ats in values]), total=len(values))):
+            for row in list(track(
+                    p.imap_unordered(call, [[ats, bigwig, rfc, bams] for ats in values]),
+                    total=len(values)), description="Filtering..."):
                 if row:
                     w.write(row + "\n")
 
