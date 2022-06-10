@@ -3,7 +3,7 @@
 u"""
 Created at 2021.04.25 by Zhang
 
-Contians all the parameters and command line params handler
+Contains all the parameters and command line params handler
 """
 import os
 import sys
@@ -18,9 +18,39 @@ from src.progress import custom_progress
 from src.reader import check_bam, load_barcodes
 
 
+def format_res(utr, res: Optional[Parameters], number_of_reads: int = 0) -> Optional[str]:
+    u"""
+    as name says format ATS model results to meaningful str
+    """
+    if not res:
+        return None
+
+    site = utr.start if utr.strand == "+" else utr.end
+
+    sites = [str(site + x if utr.strand == "+" else site - x)
+             for x in res.alpha_arr]
+
+    data = [
+        f"{utr.chromosome}:{utr.start}-{utr.end}:{utr.strand}",
+        utr.id,
+        utr.name,
+        str(number_of_reads),
+        ",".join(sites),
+        res.to_res_str()
+    ]
+    return "\t".join(data)
+
+
+def keys() -> List[str]:
+    res = ["utr", "gene_name", "transcript_name",
+           "number_of_reads", "inferred_sites"]
+    res += Parameters.keys()
+    return res
+
+
 class ATSParams(object):
     u"""
-    This a a param handler for ATS inferrence
+    This a param handler for ATS inference
     """
 
     def __init__(
@@ -40,8 +70,6 @@ class ATSParams(object):
     ):
         u"""
         init this function
-
-        :params bam: path to bam files or list of bams
         """
         log.info("Load UTR")
 
@@ -113,34 +141,6 @@ class ATSParams(object):
 
         return st_arr
 
-    def keys(self) -> List[str]:
-        res = ["utr", "gene_name", "transcript_name",
-               "number_of_reads", "infered_sites"]
-        res += Parameters.keys()
-        return res
-
-    def format_res(self, utr, res: Optional[Parameters], number_of_reads: int = 0) -> Optional[str]:
-        u"""
-        as name says format ATS model results to meaningful str
-        """
-        if not res:
-            return None
-
-        site = utr.start if utr.strand == "+" else utr.end
-
-        sites = [str(site + x if utr.strand == "+" else site - x)
-                 for x in res.alpha_arr]
-
-        data = [
-            f"{utr.chromosome}:{utr.start}-{utr.end}:{utr.strand}",
-            utr.id,
-            utr.name,
-            str(number_of_reads),
-            ",".join(sites),
-            res.to_res_str()
-        ]
-        return "\t".join(data)
-
     def run(self, idx: int) -> List:
         u"""
         Factory function to execute the ATS model and format results
@@ -186,7 +186,7 @@ class ATSParams(object):
             )
 
             try:
-                res.append(self.format_res(utr, m.run(), len(m.st_arr)))
+                res.append(format_res(utr, m.run(), len(m.st_arr)))
             except Exception as err:
                 if self.debug:
                     log.exception(err)
@@ -362,7 +362,7 @@ def ats(
         with progress:
             task = progress.add_task("Computing...", total=len(params))
             with open(output, "w+") as w:
-                header = '\t'.join(params.keys())
+                header = '\t'.join(keys())
                 w.write(f"{header}\n")
 
                 while not progress.finished:

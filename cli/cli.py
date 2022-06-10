@@ -3,13 +3,15 @@
 u"""
 Created at 2021.04.25 by Zhang
 
-Comand line handlers
+Command line handlers
 """
 import click
 
 from cli.ats import ats
 from cli.coexp import coexp
 from cli.isoform import isoform
+from cli.train import train
+from cli.filter import filter
 from cli.counts import count
 
 
@@ -18,9 +20,7 @@ LABEL = "scATS"
 CONTEXT_SETTINGS = dict(help_option_names=['-h', '--help'])
 
 
-@click.group(
-    context_settings=CONTEXT_SETTINGS,
-)
+@click.group(context_settings=CONTEXT_SETTINGS)
 @click.version_option(VERSION, message="Current version %(version)s")
 def cli():
     u"""
@@ -41,6 +41,8 @@ cli.add_command(ats)
 cli.add_command(isoform)
 cli.add_command(count)
 cli.add_command(coexp)
+cli.add_command(train)
+cli.add_command(filter)
 
 
 if __name__ == "__main__":

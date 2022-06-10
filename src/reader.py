@@ -14,7 +14,7 @@ from typing import Dict, List
 
 import pysam
 
-from src.loci import BED, Reads
+from src.loci import BED, Reads, Region
 from src.logger import log
 from src.progress import custom_progress
 
@@ -28,7 +28,7 @@ def load_ats(path: str) -> Dict:
 
     beds = {}
     header = None
-    progress = custom_progress(io = True)
+    progress = custom_progress(io=True)
     with progress:
         task_id = progress.add_task(
             f"Reading... ", total=os.path.getsize(path))
@@ -53,8 +53,8 @@ def load_ats(path: str) -> Dict:
                 if "," in key:
                     continue
 
-                alpha = data["infered_sites"].split(",")
-                
+                alpha = data["inferred_sites"].split(",")
+
                 if key not in beds.keys():
                     beds[key] = set()
                 try:
@@ -63,7 +63,7 @@ def load_ats(path: str) -> Dict:
                             x = int(float(x))
 
                             beds[key].add(BED(
-                                chrom, x - 1, x, strand, 
+                                chrom, x - 1, x, strand,
                                 "{}_{}".format(data["gene_name"], data["transcript_name"]), str(len(beds) + 1)
                             ))
                 except Exception as e:
@@ -97,13 +97,12 @@ def load_gtf(path: str) -> Dict:
     u"""
     load ats modeling output data
     :param path: the path to ats modeling output file
-    :param min_ats: the minimum number of ATS locate in single UTR
     :return dict: keys -> utr region; values -> list of splice region
     """
 
     beds = {}
 
-    progress = custom_progress(io = True)
+    progress = custom_progress(io=True)
     with progress:
         task_id = progress.add_task(
             f"Reading... ", total=os.path.getsize(path))
@@ -119,9 +118,9 @@ def load_gtf(path: str) -> Dict:
                 if len(line) <= 8:
                     continue
 
-                if line[2] != "transcript" and not "RNA" in line[2]:
+                if line[2] != "transcript" and "RNA" not in line[2]:
                     continue
-                
+
                 strand = line[6]
 
                 chrom, start_pos, end_pos = line[0], int(line[3]), int(line[4])
@@ -130,7 +129,7 @@ def load_gtf(path: str) -> Dict:
 
                 if gene not in beds.keys():
                     beds[gene] = set()
-                
+
                 beds[gene].add(BED(
                     chrom, start_pos, end_pos, strand,
                     name=info.get("transcript_name", info.get("Name")),
@@ -143,13 +142,14 @@ def load_gtf(path: str) -> Dict:
 def load_utr(path: str, debug: bool = False) -> List[BED]:
     u"""
     Load extracted UTR from bed file
+
     :param path: path to bed file
+    :param debug: debug mode?
     :return list of BED objects
     """
-
     res = []
 
-    progress = custom_progress(io = True)
+    progress = custom_progress(io=True)
 
     with progress:
         task_id = progress.add_task(
@@ -184,9 +184,9 @@ def __get_strand__(read: pysam.AlignedSegment) -> str:
         elif read.is_read2 and not read.is_reverse:
             return "-"
         return "+"
- 
+
     return "-" if read.is_reverse else "+"
-   
+
 
 def load_barcodes(path: str) -> dict:
     u"""
@@ -220,18 +220,19 @@ def __is_barcode_exists__(barcodes: dict, rec: pysam.AlignedSegment) -> bool:
     """
     if not rec.has_tag("CB"):
         return False
-    
+
     cb = rec.get_tag("CB")
 
     return cb[:min(3, len(cb))] in barcodes and cb in barcodes[cb[:min(3, len(cb))]]
 
 
-def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool = False):
+def load_reads(bam: List[str], region: Region, barcode, remove_duplicate_umi: bool = False):
     u"""
     Load reads, keys -> R1; values -> R2
     Only both R1
 
-    @2021.06.10 remove dict from this function, use list and sort to increase function speed, with disadvantage like more memory usage
+    @2021.06.10 remove dict from this function, use list and sort to increase function speed,
+    with disadvantage like more memory usage
 
     :params bam: list of bam files
     :params region:
@@ -246,7 +247,8 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
 
         # check the chromosome format
         if region.chromosome not in r.references:
-            chromosome = region.chromosome.replace("chr", "") if region.chromosome.startswith("chr") else "chr" + region.chromosome
+            chromosome = region.chromosome.replace("chr", "") if region.chromosome.startswith(
+                "chr") else "chr" + region.chromosome
 
             if chromosome not in r.references:
                 log.warn(f"{region.chromosome} or {chromosome} not present in bam file")
@@ -262,7 +264,7 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
 
             if rec.is_unmapped or rec.is_qcfail or rec.mate_is_unmapped:
                 continue
-            
+
             if __get_strand__(rec) != region.strand:
                 continue
 
@@ -270,7 +272,7 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
             if barcode.get(b):
                 if not __is_barcode_exists__(barcode[b], rec):
                     continue
-            
+
             # filter duplicate umi
             if remove_duplicate_umi:
                 if not rec.has_tag("UB") or rec.get_tag("UB") in umis:
@@ -287,12 +289,12 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
 
         if not_paired:
             for r in r1s:
-                r = Reads.create(r, single_end = True)
+                r = Reads.create(r, single_end=True)
                 if r:
                     yield r, None
 
             for r in r2s:
-                r = Reads.create(r, single_end = True)
+                r = Reads.create(r, single_end=True)
                 if r:
                     yield r, None
 
@@ -321,9 +323,10 @@ def load_reads(bam: List[str], region: BED, barcode, remove_duplicate_umi: bool 
 
 def check_bam(path: str) -> bool:
     try:
-        with pysam.AlignmentFile(path, require_index = True) as r:
+        with pysam.AlignmentFile(path, require_index=True) as _:
             pass
     except IOError as err:
+        log.debug(err)
         log.info(f"try to create index for {path}")
 
         try:
@@ -332,6 +335,7 @@ def check_bam(path: str) -> bool:
             log.error(err)
             sys.exit(err)
     except Exception as err:
+        log.debug(err)
         return False
     return True
 

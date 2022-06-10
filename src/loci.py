@@ -3,7 +3,7 @@
 u"""
 Created at 2021.04.25 by Zhang
 
-Dedifned genomic loci object
+Defined genomic loci object
 """
 
 from typing import List, Optional
@@ -84,7 +84,7 @@ class Region(object):
         u"""
         override + for merging regions
 
-        :return Region or None: None means there is no any overlap, Region is the merged region
+        :return Region or None: None means there has not any overlap, Region is the merged region
         """
         if self & other:
             return Region(
@@ -113,7 +113,7 @@ class Region(object):
         """
         coords = record.split(":")
         sites = [int(x) for x in coords[1].split("-")]
-        
+
         return cls(
             chromosome=coords[0],
             start=sites[0],
@@ -123,13 +123,12 @@ class Region(object):
 
 
 class GenomicLoci(Region):
-
     __slots__ = ('chromosome', 'start', 'end', 'strand', 'gtf_line')
 
     def __init__(
-        self, chromosome: str,
-        start: int, end: int,
-        strand: str, gtf_line: str
+            self, chromosome: str,
+            start: int, end: int,
+            strand: str, gtf_line: str
     ):
         super(GenomicLoci, self).__init__(chromosome, start, end, strand)
         self.gtf_line = gtf_line
@@ -146,12 +145,12 @@ class GTF(Region):
                     "transcript_id", "transcript_name", "exon_id"]
 
     def __init__(
-        self,
-        chromosome: str,
-        start: int, end: int,
-        strand: str,
-        source: str,
-        attrs: dict = None
+            self,
+            chromosome: str,
+            start: int, end: int,
+            strand: str,
+            source: str,
+            attrs: dict = None
     ):
         super(GTF, self).__init__(chromosome, start, end, strand)
         self.attrs = attrs
@@ -159,7 +158,7 @@ class GTF(Region):
 
         self.ids = {}
         for i in self.__id_label__:
-            self.ids[i] = set([self.attrs[i]]) if i in self.attrs.keys() else set()
+            self.ids[i] = {self.attrs[i]} if i in self.attrs.keys() else set()
 
     def __hash__(self):
         return hash((self.chromosome, self.start, self.end, self.strand, self.source))
@@ -203,7 +202,8 @@ class GTF(Region):
     def create(cls, record: str):
         u"""
         Create GTF object from gtf record
-        :param record: 1       havana  gene    11869   14409   .       +       .       gene_id "ENSG00000223972"; gene_version "5"; 
+        :param record: 1       havana  gene    11869   14409   .       +       .       g \
+                        ene_id "ENSG00000223972"; gene_version "5";
         """
 
         record = record.strip().split("\t")
@@ -232,6 +232,10 @@ class GTF(Region):
     @property
     def exon_id(self) -> str:
         return ",".join(sorted(self.ids["exon_id"]))
+
+    @property
+    def exon_name(self) -> str:
+        return ",".join(sorted(self.ids["exon_name"]))
 
     @property
     def transcript_name(self) -> str:
@@ -271,6 +275,7 @@ class GTF(Region):
     def is_duplicate(self) -> bool:
         return "," in self.id
 
+
 class BED(Region):
     u"""
     Created at 2021.04.27 by Zhang
@@ -281,13 +286,13 @@ class BED(Region):
     __slots__ = ("name", "id")
 
     def __init__(
-        self,
-        chromosome: str,
-        start: int,
-        end: int,
-        strand: str,
-        name: str,
-        record_id: str
+            self,
+            chromosome: str,
+            start: int,
+            end: int,
+            strand: str,
+            name: str,
+            record_id: str
     ):
         super(BED, self).__init__(chromosome, start, end, strand)
         self.name = name
@@ -318,8 +323,8 @@ class BED(Region):
                 start=min(self.start, other.start),
                 end=max(self.end, other.end),
                 strand=self.strand,
-                name = merge(self.name, other.name), 
-                record_id = merge(self.id, other.id)
+                name=merge(self.name, other.name),
+                record_id=merge(self.id, other.id)
             )
 
     @classmethod
@@ -375,15 +380,15 @@ class Reads(Region):
     __slots__ = ["name", "is_read1", "cigar", "kwargs"]
 
     def __init__(
-        self,
-        ref: str,
-        start: int,
-        end: int,
-        name: str,
-        strand: str,
-        is_read1: bool,
-        cigar=None,
-        **kwargs
+            self,
+            ref: str,
+            start: int,
+            end: int,
+            name: str,
+            strand: str,
+            is_read1: bool,
+            cigar=None,
+            **kwargs
     ):
         u"""
         init the reads object
@@ -394,7 +399,7 @@ class Reads(Region):
         :param name: reads name
         :param strand: strand
         :param is_read1: as name says
-        :param cigar: cigar tuples, detailes see pysam.AlignedSegment
+        :param cigar: cigar tuples, details see pysam.AlignedSegment
         :param paired: SE -> None, PE -> pointer to paired reads 
         """
 
@@ -412,6 +417,7 @@ class Reads(Region):
 
         :param record: as type
         :param skip_qc: skip QC filtering
+        :param single_end: whether input bam is single end
         :return if qc is enabled and the records failed qc, then return None
         """
         if not skip_qc:
@@ -499,5 +505,4 @@ class Reads(Region):
 
 
 if __name__ == '__main__':
-    print(Region.create_from_bed("chr1\t1\t22\t.\t.\t+\tasfd"))
     pass

@@ -6,17 +6,34 @@ ATS idenfication and quantification tools
 
 ## Installation
 
+### 1. install from source
 ```bash
 git clone git@github.com:ygidtu/scATS.git
-
 cd scATS
 
 # install scATS as command line tool
 python3 setup.py install
+```
 
-# Or just run source code
+**Note: ** if encountered the network timeout issues using `python3 setup.py install`, please try to change the pypi mirrors by editing `$HOME/.pydistutils.cfg`
+```ini
+[easy_install]
+index-url=https://mirrors.aliyun.com/pypi/simple/
+find-links=https://mirrors.aliyun.com/pypi/simple/
+```
+
+### 2. run as scripts
+```bash
+git clone git@github.com:ygidtu/scATS.git
+cd scATS
+
+pip install rich click pysam scipy numpy sklearn pybigwig pybedtools
+# Or using pipenv
+pipenv install && pipenv shell # if encountered pypi mirrors timeout, please modify the pypi mirror in Pipfile
+
 python3 main.py
 ```
+
 
 ## Usage
 

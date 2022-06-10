@@ -4,16 +4,16 @@ verify_ssl = true
 name = "pypi"
 
 [packages]
-rich = "*"
-click = "*"
-pysam = "*"
+rich = ">=12.4.4"
+click = ">=8.1.3"
+pysam = ">=0.16.0.1"
 scipy = "*"
-numpy = ">=1.2.1"
-sklearn = "*"
-pybigwig = "*"
-pybedtools = "*"
+numpy = ">=1.21.6"
+sklearn = ">=0.0"
+pybigwig = ">=0.3.18"
+pybedtools = ">=0.9.0"
 
 [dev-packages]
 
 [requires]
-python_version = ">=3.6"
+python_version = ">3.6"

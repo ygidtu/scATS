@@ -10,7 +10,7 @@ from typing import Dict, List, Optional, Tuple
 
 import pysam
 
-from src.loci import BED, Reads, Region
+from src.loci import BED, Reads, GTF
 from src.reader import load_reads
 
 
@@ -44,7 +44,9 @@ class Window:
     def __str__(self):
         return f'{self.start}  {self.end}  {len(self)}'
 
-    #################### window vs window -> bool #####################
+    ####################
+    # window vs window -> bool
+    ####################
     def __lshift__(self, other):
         return self.end <= other.start
 
@@ -77,7 +79,9 @@ class Window:
     def adj(self, other):
         return self.end == other.start or self.start == other.end
 
-    #################### window vs point operation #####################
+    ####################
+    # window vs point operation
+    ####################
     # if a point falls within the window
     def __contains__(self, point):
         if self.is_empty():
@@ -191,12 +195,12 @@ class TreeNode:
 
 class Coordinate(object):
     u"""
-    object to handle the coordanite convertion of isoforms from reference file
+    object to handle the coordinate conversion of isoforms from reference file
     """
 
     __slots__ = ('gene', 'isoforms', 'ids', 'bams', 'barcodes')
 
-    def __init__(self, gene: Region, isoforms:  Dict):
+    def __init__(self, gene: GTF, isoforms: Dict):
         u"""
         init
         :params gene: gene region
@@ -213,7 +217,7 @@ class Coordinate(object):
     @property
     def chromosome(self):
         return self.gene.chromosome
-    
+
     @property
     def start(self):
         return self.gene.start
@@ -221,7 +225,7 @@ class Coordinate(object):
     @property
     def end(self):
         return self.gene.end
-    
+
     @property
     def strand(self):
         return self.gene.strand
@@ -231,7 +235,6 @@ class Coordinate(object):
 
     def __add__(self, other):
         gene = self.gene + other.gene
-
         isoforms = self.isoforms
         isoforms.update(other.isoforms)
 
@@ -243,7 +246,7 @@ class Coordinate(object):
         """
         for bam in bams:
             try:
-                with pysam.AlignmentFile(bam) as r:
+                with pysam.AlignmentFile(bam) as _:
                     pass
             except Exception as err:
                 raise FileNotFoundError(
@@ -279,7 +282,7 @@ class Coordinate(object):
 
             for e in exons:
                 res.append([idx, e.start - self.gene.start,
-                           e.end - self.gene.start])
+                            e.end - self.gene.start])
 
         return res
 
@@ -291,13 +294,13 @@ class Coordinate(object):
     @property
     def is_duplicate(self):
         return self.gene.is_duplicate
-    
+
     def get(self, idx: int) -> Optional[str]:
         u"""
         get transcript id by index
         """
         if idx == 0:
-            return self.gene.id
+            return self.gene.gene_id
 
         if idx > len(self.ids):
             return None
@@ -393,7 +396,7 @@ class Coordinate(object):
 
                 if idx == 0:
                     st = max(st - utr_length // 2, 1)
-                
+
                 if idx == len(self.relative) - 1:
                     en = en + utr_length // 2
 
@@ -421,7 +424,7 @@ class Coordinate(object):
             else:
                 if current_trans.is_cover(current_reads, 5):
                     matches[current_trans.id] = 1 + \
-                        matches.get(current_trans.id, 0)
+                                                matches.get(current_trans.id, 0)
                 i += 1
 
         for idx, match in matches.items():
@@ -452,7 +455,7 @@ class Coordinate(object):
 
         for i in utrs[1:]:
             if curr_utr & i:
-                curr_utr =  curr_utr + i
+                curr_utr = curr_utr + i
             else:
                 res.append(curr_utr)
                 curr_utr = i
@@ -461,29 +464,4 @@ class Coordinate(object):
 
 
 if __name__ == '__main__':
-    from rich import print
-    gene = BED("1", 1000, 4000, "+", "", "")
-
-    isos = {
-        "iso1": [
-            BED("1", 1000, 1150, "+", "", ""),
-            BED("1", 1116, 2100, "+", "", ""),
-            BED("1", 1823, 3100, "+", "", "")
-        ],
-        "iso2": [
-            BED("1", 1102, 3020, "+", "", ""),
-            BED("1", 1203, 3300, "+", "", ""),
-            BED("1", 2604, 3560, "+", "", "")
-        ],
-        "iso3": [
-            BED("1", 3405, 4000, "+", "", ""),
-            BED("1", 3706, 4000, "+", "", ""),
-            BED("1", 3843, 4000, "+", "", "")
-        ]
-    }
-
-    rel = ReferenceIsoform(gene, isos)
-
-    print(rel.ids)
-    print(rel.relative)
-    print(rel.get(4))
+    pass
