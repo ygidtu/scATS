@@ -17,6 +17,7 @@ import pysam
 from src.loci import BED, Reads, Region
 from src.logger import log
 from src.progress import custom_progress
+from tqdm import tqdm
 
 
 def load_ats(path: str) -> Dict:
@@ -226,7 +227,7 @@ def __is_barcode_exists__(barcodes: dict, rec: pysam.AlignedSegment) -> bool:
     return cb[:min(3, len(cb))] in barcodes and cb in barcodes[cb[:min(3, len(cb))]]
 
 
-def load_reads(bam: List[str], region: Region, barcode, remove_duplicate_umi: bool = False):
+def load_reads(bam: List[str], region: Region, barcode, remove_duplicate_umi: bool = False, inside_region: bool = True):
     u"""
     Load reads, keys -> R1; values -> R2
     Only both R1
@@ -241,7 +242,7 @@ def load_reads(bam: List[str], region: Region, barcode, remove_duplicate_umi: bo
     not_paired = False
     for b in bam:
         umis = set()
-        r1s, r2s = [], []
+        r1s, r2s = {}, {}
 
         r = pysam.AlignmentFile(b) if isinstance(b, str) else b
 
@@ -280,45 +281,47 @@ def load_reads(bam: List[str], region: Region, barcode, remove_duplicate_umi: bo
                 umis.add(rec.get_tag("UB"))
 
             if rec.is_read1:
-                r1s.append(rec)
+                r1s[rec.query_name] = rec
             else:
-                r2s.append(rec)
+                r2s[rec.query_name] = rec
 
         if isinstance(b, str):
             r.close()
 
         if not_paired:
-            for r in r1s:
+            for r in r1s.values():
                 r = Reads.create(r, single_end=True)
                 if r:
                     yield r, None
 
-            for r in r2s:
+            for r in r2s.values():
                 r = Reads.create(r, single_end=True)
                 if r:
                     yield r, None
 
-            return
+        else:
+            if inside_region:
+                for key in set(r1s.keys()) & set(r2s.keys()):
+                    r1 = Reads.create(r1s[key])
+                    r2 = Reads.create(r2s[key])
 
-        r1s = sorted(r1s, key=lambda x: x.query_name)
-        r2s = sorted(r2s, key=lambda x: x.query_name)
-
-        i, j = 0, 0
-        while i < len(r1s) and j < len(r2s):
-            r1 = r1s[i]
-            r2 = r2s[j]
-
-            if r1.query_name < r2.query_name:
-                i += 1
-            elif r1.query_name > r2.query_name:
-                j += 1
+                    if inside_region:
+                        if region.is_cover(r1, 0) and region.is_cover(r2, 0):
+                            yield r1, r2
             else:
-                r1 = Reads.create(r1)
-                r2 = Reads.create(r2)
-                if r1 and r2 and region.is_cover(r1, 0) and region.is_cover(r2, 0):
-                    yield r1, r2
+                for key in r1s.keys():
+                    r1 = Reads.create(r1s[key])
+                    r2 = None
+                    if key in r2s.keys():
+                        r2 = Reads.create(r2s.pop(key))
 
-                i += 1
+                    if r1:
+                        yield r1, r2
+
+                for key in r2s.keys():
+                    r1 = Reads.create(r2s[key])
+                    if r1:
+                        yield r1, None
 
 
 def check_bam(path: str) -> bool:

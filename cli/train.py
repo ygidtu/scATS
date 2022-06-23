@@ -117,28 +117,40 @@ def bigger(a, b, span=500):
 
 
 CLASSIFIERS = {
-    KNeighborsClassifier: {
-        "n_neighbors": [3, 4, 5, 6, 7, 8, 9, 10],
-        "weights": ["uniform", "distance"],
-        "algorithm": ["ball_tree", "kd_tree", "brute"],
-        "leaf_size": [1, 2],
-        "metric": ["minkowski", "euclidean", "manhattan", "chebyshev", "wminkowski", "seuclidean", "mahalanobis"]
+    "knn": {
+        "classifier": KNeighborsClassifier,
+        "params": {
+            "n_neighbors": [3, 4, 5, 6, 7, 8, 9, 10],
+            "weights": ["uniform", "distance"],
+            "algorithm": ["ball_tree", "kd_tree", "brute"],
+            "leaf_size": [1, 2],
+            "metric": ["minkowski", "euclidean", "manhattan", "chebyshev", "wminkowski", "seuclidean", "mahalanobis"]
+        }
     },
-    RandomForestClassifier: {
-        'n_estimators': [10, 20, 30, 40, 50, 75, 100, 200, 300, 400, 500],
-        'max_features': ['sqrt', 'log2'],
-        'criterion': ['gini', 'entropy', "log_loss"]
+    "rf": {
+        "classifier": RandomForestClassifier,
+        "params": {
+            'n_estimators': [10, 20, 30, 40, 50, 75, 100, 200, 300, 400, 500],
+            'max_features': ['sqrt', 'log2'],
+            'criterion': ['gini', 'entropy', "log_loss"]
+        }
     },
-    SVC: {
-        "kernel": ["linear", "poly", "rbf", "sigmoid", "precomputed"],
-        "degree": [3, 4, 5, 6],
-        "gamma": ["scale", "auto"],
-        "decision_function_shape": ["ovo", "ovr"]
+    "svc": {
+        "classifier": SVC,
+        "params": {
+            "kernel": ["linear", "poly", "rbf", "sigmoid", "precomputed"],
+            "degree": [3, 4, 5, 6],
+            "gamma": ["scale", "auto"],
+            "decision_function_shape": ["ovo", "ovr"]
+        }
     },
-    DecisionTreeClassifier: {
-        'criterion': ['gini', 'entropy', 'log_loss'],
-        "splitter": ["best", "random"],
-        "max_features": ["sqrt", "log2"]
+    "dt": {
+        "classifier": DecisionTreeClassifier,
+        "params": {
+            'criterion': ['gini', 'entropy', 'log_loss'],
+            "splitter": ["best", "random"],
+            "max_features": ["sqrt", "log2"]
+        }
     }
 }
 
@@ -152,9 +164,10 @@ CLASSIFIERS = {
 @click.option('-n', '--n-jobs', type=int, default=1, help='The number of processes to use.')
 @click.option('-s', '--sample-size', type=float, default=1, help='0~1 to control the data size used for training.')
 @click.option('-t', '--test-size', type=float, default=.3, help='the size of test dataset.')
+@click.option('--classifier', type=click.Choice(["knn", "rf", "svc", "dt"]), default="rf", help='the default classifier')
 def train(atac: str, cage: str, output: str,
           genome: str = "mm10", n_jobs: int = 1,
-          sample_size: float = 1, test_size: float = .3):
+          sample_size: float = 1, test_size: float = .3, classifier: str="rf"):
     u"""
     Train machine learning classifier.
 
@@ -223,6 +236,10 @@ def train(atac: str, cage: str, output: str,
         random.seed(seed)
         res = random.sample(res, int(len(res) * sample_size))
 
+    log.info("Prepare sample data")
+    for r in track(res):
+        r.load_signal(chroms, key="1")
+
     X, y = [], []
     for r in track(res):
         if len(r.data["1"]) == 1000:
@@ -231,31 +248,27 @@ def train(atac: str, cage: str, output: str,
             X.append(np.array(data))
             y.append(r.tag)
 
-    log.info("Prepare sample data")
-    for r in track(res):
-        r.load_signal(chroms, key="1")
-
     log.info("Grid search for best parameters")
     X_train, X_test, y_train, y_test = train_test_split(np.array(X), np.array(y), test_size=test_size)
 
     accuracy_score = -1
-    for classifier, param_grid in CLASSIFIERS.items():
-        rfc = classifier(n_jobs=n_jobs)
-        cv_rfc = GridSearchCV(estimator=rfc, param_grid=param_grid, cv=5)
-        cv_rfc.fit(X_train.get(), y_train.get())
-        log.info(f"Best params: {cv_rfc.best_params_}")
+    classifier, param_grid = CLASSIFIERS[classifier]["classifier"], CLASSIFIERS[classifier]["params"]
 
-        log.info("Generating classifier using best parameters")
-        rfc = classifier(**cv_rfc.best_params_)
-        rfc.fit(X_train, y_train)
-        y_pred = rfc.predict(X_test)
+    rfc = classifier(n_jobs=n_jobs)
+    cv_rfc = GridSearchCV(estimator=rfc, param_grid=param_grid, cv=5)
+    cv_rfc.fit(X_train, y_train)
+    log.info(f"Best params: {cv_rfc.best_params_}")
 
-        if metrics.accuracy_score(y_test, y_pred) > accuracy_score:
-            accuracy_score = metrics.accuracy_score(y_test, y_pred)
-            log.info("Accuracy:", metrics.accuracy_score(y_test, y_pred))
+    log.info("Generating classifier using best parameters")
+    rfc = classifier(**cv_rfc.best_params_)
+    rfc.fit(X_train, y_train)
+    y_pred = rfc.predict(X_test)
 
-            with open(output, "wb+") as w:
-                pickle.dump(rfc, w)
+    if metrics.accuracy_score(y_test, y_pred) > accuracy_score:
+        log.info("Accuracy:", metrics.accuracy_score(y_test, y_pred))
+
+        with open(output, "wb+") as w:
+            pickle.dump(rfc, w)
 
 
 if __name__ == '__main__':

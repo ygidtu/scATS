@@ -11,7 +11,7 @@ import numpy as np
 import pyBigWig
 
 from rich.progress import track
-from scipy.optimize import curve_fit
+from scipy.stats import gaussian_kde, pearsonr
 
 from src.loci import Region
 from src.logger import log
@@ -22,27 +22,35 @@ def func(x, a, b, c):  # Gaussian peak
     return a * np.exp(-0.5 * np.power((x - b) / c, 2.0))
 
 
-def calculate_gaussian_density_similarity(x: np.array, y: np.array) -> float:
+def calculate_gaussian_density_similarity(x: np.array, y: np.array):
     if len(x) < 3:
-        return -1
+        return float('nan'), [x, y, "lt3"]
+    x = x - min(x)
     # estimate initial parameters from the data
-    val = [max(y), (max(x) + min(x)) / 2, max(y)]
-    initial_parameters = np.array(val, dtype=float)
-
     # curve fit the test data
+    """
     try:
-        fitted_parameters, p_cov = curve_fit(func, x, y, initial_parameters, maxfev=5000)
+        fitted_parameters, p_cov = curve_fit(func, x, y, initial_parameters, maxfev=500000)
     except RuntimeError as err:
         log.debug(err)
-        return -1
+        return float("nan"), [x, y, "0", "0"]
     model_predictions = func(x, *fitted_parameters)
-    abs_error = model_predictions - y
+    """
+    try:
+        kde = gaussian_kde(np.repeat(x, y.astype(np.int)))
+        model_predictions1 = kde.pdf(x)
+    except Exception as err:
+        log.info(err)
+        return float("nan"), [x, y, "0"]
 
-    # squared_errors = np.square(abs_error)
-    # mean_squared_errors = np.mean(squared_errors)
-    # root_mean_squared_error = np.sqrt(mean_squared_errors)
+    """
+    abs_error = model_predictions - y
+    squared_errors = np.square(abs_error)
+    mean_squared_errors = np.mean(squared_errors)
+    root_mean_squared_error = np.sqrt(mean_squared_errors)
     r_squared = 1.0 - (np.var(abs_error) / np.var(y))
-    return r_squared
+    """
+    return pearsonr(model_predictions1, y)[0], [x, y, model_predictions1]
 
 
 class ATS:
@@ -75,6 +83,7 @@ class ATS:
         self.L = L
         self.predict = []
         self.similarity = []
+        self.data = []
 
     @property
     def chrom(self) -> str:
@@ -125,13 +134,18 @@ class ATS:
         vals = {}
         start = site if self.utr.strand == "+" else site - 1
         end = site + 1 if self.utr.strand == "+" else site
+
         for r1, r2 in load_reads(
                 bams,
                 Region(chromosome=self.utr.chromosome, start=start, end=end, strand=self.strand),
-                barcode={}, remove_duplicate_umi=True
+                barcode={}, remove_duplicate_umi=True, inside_region=False
         ):
             if r2 is None:
                 r2 = r1
+
+            if r2 is None:
+                continue
+
             ss = r1.start if self.utr.strand == "+" else r2.end
             vals[ss] = vals.get(ss, 0) + 1
 
@@ -162,7 +176,9 @@ class ATS:
 
                     if bams:
                         x, y = self.load(bams, self.inferred_sites[i])
-                        self.similarity.append(calculate_gaussian_density_similarity(x, y))
+                        s, val = calculate_gaussian_density_similarity(x, y)
+                        self.similarity.append(s)
+                        self.data.append(val)
 
 
 def call(args):
@@ -170,7 +186,7 @@ def call(args):
     ats.check(bigwig, classifier, bams)
 
     if ats.inferred_sites:
-        return str(ats)
+        return ats
     return None
 
 
@@ -180,14 +196,15 @@ def call(args):
 @click.option('-o', '--output', type=click.Path(), required=True, help='The path to output file.')
 @click.option('-c', '--classifier', type=click.Path(), help='The path to classifier file.')
 @click.option('-n', '--n-jobs', type=int, default=1, help='The number of processes to use.')
+@click.option('-d', '--debug', type=click.Path(), help='The number of processes to use.')
 @click.argument("bams", nargs=-1, type=click.Path(exists=True))
-def filter(infile: str, bigwig: str, output: str, classifier: str, n_jobs: int,  bams: List[str]):
+def filter(infile: str, bigwig: str, output: str, classifier: str, n_jobs: int, debug: str,  bams: List[str]):
     u"""
     Filter ATSs by machine learning classifier or gaussian density similarity.
     """
 
     if not classifier and not bams:
-        raise ValueError("Please provide classifier or bam files")
+        log.error("Please provide classifier or bam files")
 
     rfc = None
     if classifier:
@@ -205,16 +222,37 @@ def filter(infile: str, bigwig: str, output: str, classifier: str, n_jobs: int, 
             else:
                 values.append(ATS.create(line))
 
+            # if debug and len(values) > 100:
+            #     break
+
     log.info("Predict")
+
+    w1 = None
+    if debug:
+        w1 = open(debug, "w+")
+
     with open(output, "w+") as w:
-        w.write(header + "\n")
+        w.write(f"{header}\tpredict\tsimilarity\n")
 
         with Pool(n_jobs) as p:
             for row in list(track(
                     p.imap_unordered(call, [[ats, bigwig, rfc, bams] for ats in values]),
-                    total=len(values)), description="Filtering..."):
+                    total=len(values), description="Filtering...")):
                 if row:
-                    w.write(row + "\n")
+                    w.write(f"{row}\n")
+
+                    if w1:
+                        val = []
+                        for data in row.data:
+                            if isinstance(data, str):
+                                cols = data
+                            else:
+                                cols = [",".join([str(i) for i in x]) for x in data]
+                            cols.append(str(row.utr))
+                            val.append("\t".join(cols))
+                        w1.write("\n".join(val) + "\n")
+    if w1:
+        w1.close()
 
 
 if __name__ == '__main__':
