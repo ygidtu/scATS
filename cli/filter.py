@@ -135,18 +135,15 @@ class ATS:
         start = site if self.utr.strand == "+" else site - 1
         end = site + 1 if self.utr.strand == "+" else site
 
-        for r1, r2 in load_reads(
+        for reads in load_reads(
                 bams,
                 Region(chromosome=self.utr.chromosome, start=start, end=end, strand=self.strand),
-                barcode={}, remove_duplicate_umi=True, inside_region=False
+                barcode={}, remove_duplicate_umi=True
         ):
-            if r2 is None:
-                r2 = r1
-
-            if r2 is None:
+            if reads is None:
                 continue
 
-            ss = r1.start if self.utr.strand == "+" else r2.end
+            ss = reads.start if self.utr.strand == "+" else reads.end
             vals[ss] = vals.get(ss, 0) + 1
 
         return np.array(list(vals.keys())), np.array(list(vals.values()))

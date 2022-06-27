@@ -43,6 +43,7 @@ class Bam(object):
         :params umi_tag: the umi tag in 10x bam
         :return cell barcode and umi
         """
+        recorded = set()
         with pysam.AlignmentFile(self.path) as r:
             for record in r.fetch(region.chromosome, region.start, region.end):
                 if record.is_qcfail or record.is_unmapped:
@@ -50,8 +51,10 @@ class Bam(object):
 
                 if record.has_tag("NH") and record.get_tag("NH") > 1:
                     continue
-                    
-                if record.has_tag(cell_tag) and record.has_tag(umi_tag):
+
+                # R1 and R2 only record for once
+                if record.query_name not in recorded and record.has_tag(cell_tag) and record.has_tag(umi_tag):
+                    recorded.add(record.query_name)
                     yield record.get_tag(cell_tag), record.get_tag(umi_tag)
 
     def reads_bulk(self, region: BED):
@@ -61,12 +64,18 @@ class Bam(object):
         :return the nubmer of reads
         """
         count = 0
+        recorded = set()
         with pysam.AlignmentFile(self.path) as r:
             for record in r.fetch(region.chromosome, region.start, region.end):
                 if record.is_qcfail or record.is_unmapped:
                     continue
 
                 if record.has_tag("NH") and record.get_tag("NH") > 1:
+                    continue
+
+                # R1 and R2 only record for once
+                if record.query_name in recorded:
+                    recorded.add(record.query_name)
                     continue
                     
                 count += 1

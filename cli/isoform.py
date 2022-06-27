@@ -54,7 +54,7 @@ def consumer(
                 continue
 
             iso_tbl.set_bams(bams)
-            reads = iso_tbl.reads(utr)
+            reads = iso_tbl.reads(utr, return_paired=True)
 
             r1_wins_list = []
             r2_wins_list = []

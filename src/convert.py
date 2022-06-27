@@ -307,13 +307,14 @@ class Coordinate(object):
 
         return self.ids[idx - 1].name
 
-    def reads(self, region: BED, remove_duplicate_umi: bool = False) -> Dict:
+    def reads(self, region: BED, remove_duplicate_umi: bool = False, return_paired: bool = False) -> Dict:
         u"""
         load reads and convert and assign isoforms
         """
         return load_reads(
             self.bams, region, self.barcodes,
-            remove_duplicate_umi=remove_duplicate_umi
+            remove_duplicate_umi=remove_duplicate_umi,
+            return_paired=return_paired
         )
 
     def __is_loci_inside_of_gene__(self, pos: int) -> bool:

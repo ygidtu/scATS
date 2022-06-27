@@ -133,7 +133,7 @@ class ATSParams(object):
         utr_site = utr.start if utr.strand == "+" else utr.end
 
         # Only iter reads1
-        for r, _ in reads:
+        for r in reads:
             if utr.start <= r.start <= r.end <= utr.end:
                 site = r.start if utr.strand == "+" else r.end
                 st_arr.append(site - utr_site if utr.strand ==
@@ -161,8 +161,8 @@ class ATSParams(object):
             if (idx + 1) not in reads.keys():
                 reads[idx + 1] = []
 
-            for r1, r2 in gene.reads(utr, remove_duplicate_umi=self.remove_duplicate_umi):
-                reads[idx + 1].append([r1, r2])
+            for read in gene.reads(utr, remove_duplicate_umi=self.remove_duplicate_umi):
+                reads[idx + 1].append(read)
             
         for idx, rds in reads.items():
             if len(rds) < self.min_reads:

@@ -227,7 +227,7 @@ def __is_barcode_exists__(barcodes: dict, rec: pysam.AlignedSegment) -> bool:
     return cb[:min(3, len(cb))] in barcodes and cb in barcodes[cb[:min(3, len(cb))]]
 
 
-def load_reads(bam: List[str], region: Region, barcode, remove_duplicate_umi: bool = False, inside_region: bool = True):
+def load_reads(bam: List[str], region: Region, barcode, remove_duplicate_umi: bool = False, return_paired: bool = False):
     u"""
     Load reads, keys -> R1; values -> R2
     Only both R1
@@ -292,36 +292,26 @@ def load_reads(bam: List[str], region: Region, barcode, remove_duplicate_umi: bo
             for r in r1s.values():
                 r = Reads.create(r, single_end=True)
                 if r:
-                    yield r, None
+                    yield r
 
             for r in r2s.values():
                 r = Reads.create(r, single_end=True)
                 if r:
-                    yield r, None
-
+                    yield r
+        elif return_paired:
+            for key in set(r1s.keys() & r2s.keys()):
+                yield Reads.create(r1s[key]), Reads.create(r2s[key])
         else:
-            if inside_region:
-                for key in set(r1s.keys()) & set(r2s.keys()):
-                    r1 = Reads.create(r1s[key])
+            for key in r1s.keys():
+                r1 = r1s[key]
+                r1 = Reads.create(r1)
+                if key in r2s.keys():
                     r2 = Reads.create(r2s[key])
 
-                    if inside_region:
-                        if region.is_cover(r1, 0) and region.is_cover(r2, 0):
-                            yield r1, r2
-            else:
-                for key in r1s.keys():
-                    r1 = Reads.create(r1s[key])
-                    r2 = None
-                    if key in r2s.keys():
-                        r2 = Reads.create(r2s.pop(key))
+                    r1.start = min(r1.start, r2.start)
+                    r1.end = max(r1.end, r2.end)
 
-                    if r1:
-                        yield r1, r2
-
-                for key in r2s.keys():
-                    r1 = Reads.create(r2s[key])
-                    if r1:
-                        yield r1, None
+                yield r1
 
 
 def check_bam(path: str) -> bool:
